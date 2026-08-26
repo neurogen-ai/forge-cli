@@ -55,6 +55,13 @@ global config > derived from `git remote get-url origin`. Tokens resolve as:
 Global flags on every command: `--host --owner --repo --token --config
 --timeout N --verbose/-v`.
 
+### Help
+
+`forge -h` lists the command families; `forge pr -h` lists one family's
+subcommands; `forge pr create -h` shows a single command's full page. Any
+usage error reprints the misused command's page under its `use:` line.
+Help goes to stdout and exits 0; errors keep stderr and their exit code.
+
 ### Pull requests
 
 ```
