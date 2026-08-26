@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"forge/internal/api"
@@ -155,5 +156,131 @@ func TestPRConversationFlatSortedAndTagged(t *testing.T) {
 	}
 	if items[2].ReviewID != 10 {
 		t.Errorf("review-comment review_id = %d", items[2].ReviewID)
+	}
+}
+
+// prCreateTestServer serves the pulls endpoint with the given status/body and
+// a configurable branch query result. branchStatus is the status returned for
+// GET .../branches?branch=...; branchBody is written on non-200. It records
+// whether any /branches request arrived.
+func prCreateTestServer(t *testing.T, pullStatus int, pullBody string, branchStatus int, branchBody string) (*httptest.Server, *int) {
+	branchHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/o/r/pulls":
+			w.WriteHeader(pullStatus)
+			fmt.Fprint(w, pullBody)
+		case "/api/v1/repos/o/r/branches":
+			if r.URL.Query().Get("branch") == "" {
+				t.Errorf("branch probe missing query parameter: %v", r.URL)
+			}
+			branchHits++
+			w.WriteHeader(branchStatus)
+			fmt.Fprint(w, branchBody)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	return ts, &branchHits
+}
+
+func TestPRCreate404DisabledPulls(t *testing.T) {
+	body := `{"message":"The target couldn't be found."}`
+	ts, _ := prCreateTestServer(t, 404, body, 200, `{}`)
+	defer ts.Close()
+
+	err := (prCreateCmd{}).Run([]string{"--title", "t", "--head", "h", "--base", "main"}, testCtx(ts))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitContext {
+		t.Fatalf("want ExitContext cli.Error, got %v", err)
+	}
+	if !strings.Contains(cerr.Msg, "does not accept pull requests") {
+		t.Errorf("Msg = %q", cerr.Msg)
+	}
+	if !strings.Contains(cerr.Hint, "The target couldn't be found.") {
+		t.Errorf("Hint missing server message: %q", cerr.Hint)
+	}
+}
+
+func TestPRCreate404BaseBranchMissing(t *testing.T) {
+	body := `{"message":"The target couldn't be found."}`
+	ts, _ := prCreateTestServer(t, 404, body, 404, body)
+	defer ts.Close()
+
+	err := (prCreateCmd{}).Run([]string{"--title", "t", "--head", "h", "--base", "main"}, testCtx(ts))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitContext {
+		t.Fatalf("want ExitContext cli.Error, got %v", err)
+	}
+	if !strings.Contains(cerr.Msg, `base branch "main" not found`) {
+		t.Errorf("Msg = %q", cerr.Msg)
+	}
+	if !strings.Contains(cerr.Hint, "The target couldn't be found.") {
+		t.Errorf("Hint missing server message: %q", cerr.Hint)
+	}
+}
+
+func TestPRCreate404HeadBranchMissing(t *testing.T) {
+	const notFound = `{"message":"The target couldn't be found."}`
+	branchHits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/o/r/pulls":
+			w.WriteHeader(404)
+			fmt.Fprint(w, notFound)
+		case "/api/v1/repos/o/r/branches":
+			branchHits++
+			if r.URL.Query().Get("branch") == "main" {
+				fmt.Fprint(w, `{}`)
+				return
+			}
+			w.WriteHeader(404)
+			fmt.Fprint(w, notFound)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer ts.Close()
+
+	err := (prCreateCmd{}).Run([]string{"--title", "t", "--head", "nope", "--base", "main"}, testCtx(ts))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitContext {
+		t.Fatalf("want ExitContext cli.Error, got %v", err)
+	}
+	if !strings.Contains(cerr.Msg, "head branch") {
+		t.Errorf("Msg = %q", cerr.Msg)
+	}
+}
+
+func TestPRCreate500PassesThroughMapErr(t *testing.T) {
+	ts, _ := prCreateTestServer(t, 500, `{"message":"boom"}`, 200, `{}`)
+	defer ts.Close()
+
+	err := (prCreateCmd{}).Run([]string{"--title", "t", "--head", "h", "--base", "main"}, testCtx(ts))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitRuntime {
+		t.Fatalf("want ExitRuntime cli.Error, got %v", err)
+	}
+	if cerr.Msg != "500: boom" {
+		t.Errorf("Msg = %q, want %q", cerr.Msg, "500: boom")
+	}
+}
+
+func TestPRCreateSuccessNoProbes(t *testing.T) {
+	ts, hits := prCreateTestServer(t, 200, `{"number":1,"title":"t"}`, 200, `{}`)
+	defer ts.Close()
+
+	ctx := testCtx(ts)
+	if err := (prCreateCmd{}).Run([]string{"--title", "t", "--head", "h", "--base", "main"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v", err)
+	}
+	if *hits != 0 {
+		t.Errorf("branch probes on happy path = %d, want 0", *hits)
 	}
 }

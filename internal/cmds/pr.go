@@ -1,6 +1,9 @@
 package cmds
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"time"
@@ -152,9 +155,48 @@ func (prCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 	pr, err := ctx.API.CreatePullRequest(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo,
 		api.CreatePRInput{Title: title, Head: head, Base: base, Body: body})
 	if err != nil {
-		return mapErr(err)
+		return mapCreateErr(ctx, ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, head, base, err)
 	}
 	return writeJSON(ctx.Stdout, pr)
+}
+
+// serverMessage quotes an APIError's body text, with a fallback when the
+// server sent none.
+func serverMessage(e *api.APIError) string {
+	if e != nil && e.Message != "" {
+		return e.Message
+	}
+	return "(no message in response body)"
+}
+
+// mapCreateErr converts a CreatePullRequest failure into a typed cli error,
+// disambiguating 404s per releases/v0.1.2.md: base missing, head missing,
+// or pull requests disabled. Any other status passes through mapErr
+// unchanged.
+func mapCreateErr(ctx *cli.Ctx, owner, repo, head, base string, err error) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+		return mapErr(err)
+	}
+	if ok, perr := ctx.API.BranchExists(owner, repo, base); perr == nil && !ok {
+		return &cli.Error{
+			Code: cli.ExitContext,
+			Msg:  fmt.Sprintf("base branch %q not found in %s/%s", base, owner, repo),
+			Hint: fmt.Sprintf("POST /repos/%s/%s/pulls returned 404; GET .../branches?branch=%s also 404'd; server said: %q. Check --base / FORGE_BASE / [defaults] base.", owner, repo, base, serverMessage(apiErr)),
+		}
+	}
+	if ok, perr := ctx.API.BranchExists(owner, repo, head); perr == nil && !ok {
+		return &cli.Error{
+			Code: cli.ExitContext,
+			Msg:  fmt.Sprintf("head branch %q not found in %s/%s", head, owner, repo),
+			Hint: fmt.Sprintf("POST /repos/%s/%s/pulls returned 404; GET .../branches?branch=%s also 404'd; server said: %q. Check --head / FORGE_HEAD / your current git branch.", owner, repo, head, serverMessage(apiErr)),
+		}
+	}
+	return &cli.Error{
+		Code: cli.ExitContext,
+		Msg:  fmt.Sprintf("repository %s/%s does not accept pull requests", owner, repo),
+		Hint: fmt.Sprintf("branches verified but POST /repos/%s/%s/pulls returned 404; server said: %q. Pull requests are likely disabled for this repo (or it is a mirror); enable them in repo Settings, or check --repo.", owner, repo, serverMessage(apiErr)),
+	}
 }
 
 // ---- pr get ----
