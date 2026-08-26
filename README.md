@@ -68,6 +68,11 @@ forge pr conversation N [--format flat|grouped]
 configured base. If no base can be determined it fails asking for `--base`.
 Output is JSON on stdout.
 
+A 404 at create time is diagnosed: the command checks whether the base and
+head branches exist and reports which one is missing, or says the repo does
+not accept pull requests if both exist. The server's original message stays
+in the hint.
+
 ### Issues
 
 ```
