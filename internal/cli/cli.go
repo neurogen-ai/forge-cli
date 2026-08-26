@@ -130,17 +130,77 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		return ExitUsage
 	}
 
+	// Global flags are accepted after the command path too (users naturally
+	// write `forge pr list -v --host x`). Known global flags are consumed here;
+	// everything else passes through to the command untouched.
+	rest := argv[i+consumed:]
+	kept, err := applyGlobalArgs(rest, ctx)
+	if err != nil {
+		fmt.Fprintln(ctx.Stderr, err.Error())
+		return ExitUsage
+	}
+
 	if base.Prepare != nil {
 		if err := base.Prepare(ctx, cmd); err != nil {
 			return reportError(ctx.Stderr, err)
 		}
 	}
 
-	err := cmd.Run(argv[i+consumed:], ctx)
+	err = cmd.Run(kept, ctx)
 	if err == nil {
 		return ExitOK
 	}
 	return reportError(ctx.Stderr, err)
+}
+
+// applyGlobalArgs scans args for known global flags, applies them to ctx,
+// and returns the args that remain for the command. Unknown flags are kept.
+func applyGlobalArgs(args []string, ctx *Ctx) ([]string, error) {
+	valFlag := func(name string) (*string, bool) {
+		switch name {
+		case "--host":
+			return &ctx.GlobalFlags.Host, true
+		case "--owner":
+			return &ctx.GlobalFlags.Owner, true
+		case "--repo":
+			return &ctx.GlobalFlags.Repo, true
+		case "--token":
+			return &ctx.GlobalFlags.Token, true
+		case "--config":
+			return &ctx.GlobalFlags.ConfigPath, true
+		case "--timeout":
+			return nil, true // integer-valued; handled below
+		}
+		return nil, false
+	}
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-v" || arg == "--verbose" {
+			ctx.Verbose = true
+			continue
+		}
+		ptr, known := valFlag(arg)
+		if !known || !strings.HasPrefix(arg, "--") {
+			out = append(out, arg)
+			continue
+		}
+		if i+1 >= len(args) {
+			return nil, fmt.Errorf("forge: %s requires a value", arg)
+		}
+		val := args[i+1]
+		i++
+		if ptr == nil { // --timeout
+			n, err := strconv.Atoi(val)
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("forge: --timeout must be a positive integer")
+			}
+			ctx.GlobalFlags.TimeoutSeconds = n
+			continue
+		}
+		*ptr = val
+	}
+	return out, nil
 }
 
 // reportError prints err and returns its mapped exit code.

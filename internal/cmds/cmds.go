@@ -51,7 +51,8 @@ func writeJSON(w interface{ Write([]byte) (int, error) }, v any) error {
 }
 
 // mapErr converts api-layer errors into typed cli errors with exit codes:
-// transport failure => ExitNetwork, API error => ExitRuntime.
+// transport failure => ExitNetwork, auth rejection (401/403) => ExitAuth,
+// other API errors => ExitRuntime.
 func mapErr(err error) error {
 	if err == nil {
 		return nil
@@ -61,6 +62,13 @@ func mapErr(err error) error {
 	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
+		if apiErr.Status == 401 || apiErr.Status == 403 {
+			return &cli.Error{
+				Code: cli.ExitAuth,
+				Msg:  apiErr.Error(),
+				Hint: "token rejected by server; pass a valid --token or fix your git credential helper entry",
+			}
+		}
 		return &cli.Error{Code: cli.ExitRuntime, Msg: apiErr.Error()}
 	}
 	return &cli.Error{Code: cli.ExitRuntime, Msg: err.Error()}

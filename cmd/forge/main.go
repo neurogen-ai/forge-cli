@@ -67,6 +67,7 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 	}
 
 	host := firstNonEmpty(ctx.GlobalFlags.Host, os.Getenv("FORGE_HOST"), cfg.Defaults.Host, rem.Host)
+	host = normalizeHost(host)
 	owner := firstNonEmpty(ctx.GlobalFlags.Owner, os.Getenv("FORGE_OWNER"), cfg.Defaults.Owner, rem.Owner)
 	repoName := firstNonEmpty(ctx.GlobalFlags.Repo, os.Getenv("FORGE_REPO"), cfg.Defaults.Repo, rem.Repo)
 
@@ -121,7 +122,55 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 		logger = stderrLogger{w: ctx.Stderr}
 	}
 	ctx.API = api.NewClient("https://"+host, token, time.Duration(timeout)*time.Second, logger)
+
+	// Verify the resolved repository actually exists at the endpoint so a
+	// typo'd host/owner/repo fails once, clearly, instead of per-command 404s.
+	exists, err := ctx.API.RepoExists(owner, repoName)
+	if err != nil {
+		return mapWiredErr(err)
+	}
+	if !exists {
+		return &cli.Error{
+			Code: cli.ExitContext,
+			Msg:  "repository not found",
+			Hint: fmt.Sprintf("%s/%s at %s does not exist; check the repo exists and that host/owner/repo are correct", owner, repoName, host),
+		}
+	}
 	return nil
+}
+
+// mapWiredErr converts errors from the wiring-time repo check into typed cli
+// errors: transport => ExitNetwork, auth rejection => ExitAuth, otherwise
+// ExitRuntime.
+func mapWiredErr(err error) error {
+	var e *cli.Error
+	if errors.As(err, &e) {
+		return e
+	}
+	if api.IsNetwork(err) {
+		return &cli.Error{Code: cli.ExitNetwork, Msg: "network failure", Hint: err.Error()}
+	}
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.Status == 401 || apiErr.Status == 403 {
+			return &cli.Error{
+				Code: cli.ExitAuth,
+				Msg:  apiErr.Error(),
+				Hint: "token rejected by server; pass a valid --token or fix your git credential helper entry",
+			}
+		}
+		return &cli.Error{Code: cli.ExitRuntime, Msg: apiErr.Error()}
+	}
+	return &cli.Error{Code: cli.ExitRuntime, Msg: err.Error()}
+}
+
+// normalizeHost strips an optional scheme and trailing slash from a host
+// value, accepting both "git.example.com" and "https://git.example.com/".
+func normalizeHost(h string) string {
+	for _, p := range []string{"https://", "http://"} {
+		h = strings.TrimPrefix(h, p)
+	}
+	return strings.TrimSuffix(h, "/")
 }
 
 // firstNonEmpty returns the first non-empty string.
