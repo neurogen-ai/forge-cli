@@ -114,6 +114,16 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 
 	path := argv[i]
 	cmd := reg.Lookup(path)
+	// Multi-word command names ("cache flush", "pr list"): the registry keys
+	// on the full name, so try joining the next token before giving up.
+	consumed := 1
+	if cmd == nil && i+1 < len(argv) {
+		if joined := path + " " + argv[i+1]; reg.Lookup(joined) != nil {
+			path = joined
+			cmd = reg.Lookup(joined)
+			consumed = 2
+		}
+	}
 	if cmd == nil {
 		fmt.Fprintf(ctx.Stderr, "forge: unknown command %q\n\n", path)
 		Usage(ctx.Stderr, reg)
@@ -126,7 +136,7 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		}
 	}
 
-	err := cmd.Run(argv[i+1:], ctx)
+	err := cmd.Run(argv[i+consumed:], ctx)
 	if err == nil {
 		return ExitOK
 	}

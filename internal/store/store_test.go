@@ -32,12 +32,23 @@ func TestSaveCollisionSuffixesTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(p2) != "repo-7-1700000000.json" {
+	if filepath.Base(p2) != "repo-7-1700000000-1.json" {
 		t.Errorf("collision path = %s", p2)
 	}
 	data, _ := os.ReadFile(p2)
 	if string(data) != "b" {
 		t.Errorf("collision overwrote original content")
+	}
+	p3, err := Save(dir, "repo", 7, []byte("c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(p3) != "repo-7-1700000000-2.json" {
+		t.Errorf("second collision path = %s", p3)
+	}
+	data, _ = os.ReadFile(p3)
+	if string(data) != "c" {
+		t.Errorf("second collision overwrote existing content")
 	}
 	_ = p1
 }

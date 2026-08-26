@@ -145,7 +145,7 @@ func (prCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 		base = ctx.Cfg.Defaults.Base
 	}
 	if base == "" {
-		return &cli.Error{Code: cli.ExitRuntime, Msg: "cannot determine base branch", Hint: "cannot determine base branch; pass --base"}
+		return &cli.Error{Code: cli.ExitRuntime, Msg: "no base branch", Hint: "cannot determine base branch; pass --base"}
 	}
 	body, _ := flagValue(args, "--body")
 

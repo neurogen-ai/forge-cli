@@ -24,7 +24,14 @@ func Save(dir, repo string, number int, data []byte) (string, error) {
 	base := fmt.Sprintf("%s-%d", repo, number)
 	path := filepath.Join(dir, base+".json")
 	if _, err := os.Stat(path); err == nil {
-		path = filepath.Join(dir, fmt.Sprintf("%s-%d.json", base, timeNowUnix()))
+		// Suffix until we hit a name that does not exist yet; a single
+		// suffix step could still collide and silently overwrite.
+		for i := int64(1); ; i++ {
+			path = filepath.Join(dir, fmt.Sprintf("%s-%d-%d.json", base, timeNowUnix(), i))
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				break
+			}
+		}
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("store: write %s: %w", path, err)
