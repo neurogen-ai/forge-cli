@@ -26,12 +26,13 @@ func (versionCmd) Run(args []string, ctx *cli.Ctx) error {
 	return nil
 }
 
-// stderrLogger is a minimal verbose sink; the polished request-line format
-// (method url -> status (ms)) arrives in Branch I.
+// stderrLogger is the verbose sink. The api client formats complete request
+// lines itself and never hands over header values, so Authorization cannot
+// leak through here.
 type stderrLogger struct{ w io.Writer }
 
 func (l stderrLogger) Logf(format string, args ...any) {
-	fmt.Fprintf(l.w, "forge: "+format+"\n", args...)
+	fmt.Fprintf(l.w, format+"\n", args...)
 }
 
 // wire resolves configuration, git context, and (for commands that need it)
