@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -23,6 +24,11 @@ var ErrNoToken = errors.New("no token found")
 // The credential fill runs `git credential fill` with protocol=https and the
 // given host on stdin and returns its password= line. Any fill failure or an
 // empty password returns ErrNoToken.
+//
+// If the non-interactive fill finds nothing and stdin is an interactive
+// terminal, Resolve retries once with git's normal interactive prompt flow
+// so the user can enter a username/token directly. When stdin is not a
+// terminal (pipes, CI, tests) there is no retry; the caller gets ErrNoToken.
 func Resolve(host, explicitToken string) (string, error) {
 	if explicitToken != "" {
 		return explicitToken, nil
@@ -30,7 +36,21 @@ func Resolve(host, explicitToken string) (string, error) {
 	if t := os.Getenv("FORGE_TOKEN"); t != "" {
 		return t, nil
 	}
-	return credentialFill(host)
+	tok, err := credentialFill(host)
+	if err == nil {
+		return tok, nil
+	}
+	if !stdinIsTerminal() {
+		return "", err
+	}
+	return credentialFillInteractive(host, os.Stdin, os.Stderr)
+}
+
+// stdinIsTerminal reports whether os.Stdin looks like an interactive
+// terminal. It is a variable so tests can simulate both cases.
+var stdinIsTerminal = func() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // credentialFill consults git's configured credential helper for host.
@@ -66,6 +86,29 @@ func credentialFill(host string) (string, error) {
 		return "", fmt.Errorf("%w: git credential fill: %s", ErrNoToken, msg)
 	}
 	return passwordFrom(out.String())
+}
+
+// credentialFillInteractive retries `git credential fill` WITHOUT disabling
+// git's own prompting, so the configured helper can ask the user for a
+// username/password on the terminal. The request lines are prepended to the
+// reader; everything the reader supplies afterwards goes to git. Git's stdout
+// is captured (and never echoed) so the token is not printed back; its stderr
+// passes through to out so prompts and errors remain visible.
+func credentialFillInteractive(host string, in io.Reader, out io.Writer) (string, error) {
+	cmd := exec.Command("git", "credential", "fill")
+	cmd.Stdin = io.MultiReader(
+		strings.NewReader(fmt.Sprintf("protocol=https\nhost=%s\n\n", host)),
+		in,
+	)
+	var credOut bytes.Buffer
+	cmd.Stdout = &credOut
+	if out != nil {
+		cmd.Stderr = out
+	}
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%w: interactive git credential fill: %v", ErrNoToken, err)
+	}
+	return passwordFrom(credOut.String())
 }
 
 // passwordFrom extracts the password= line from `git credential fill` output.
