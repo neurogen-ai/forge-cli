@@ -70,7 +70,6 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 	host = normalizeHost(host)
 	owner := firstNonEmpty(ctx.GlobalFlags.Owner, os.Getenv("FORGE_OWNER"), cfg.Defaults.Owner, rem.Owner)
 	repoName := firstNonEmpty(ctx.GlobalFlags.Repo, os.Getenv("FORGE_REPO"), cfg.Defaults.Repo, rem.Repo)
-
 	// Commands read the resolved values back out of GlobalFlags so the whole
 	// chain (flag > env > config > git) is visible in one place.
 	ctx.GlobalFlags.Host = host
