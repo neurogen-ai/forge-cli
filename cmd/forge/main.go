@@ -11,6 +11,7 @@ import (
 	"forge/internal/api"
 	"forge/internal/auth"
 	"forge/internal/cli"
+	"forge/internal/cmds"
 	"forge/internal/config"
 	"forge/internal/gitctx"
 )
@@ -67,6 +68,12 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 	host := firstNonEmpty(ctx.GlobalFlags.Host, os.Getenv("FORGE_HOST"), cfg.Defaults.Host, rem.Host)
 	owner := firstNonEmpty(ctx.GlobalFlags.Owner, os.Getenv("FORGE_OWNER"), cfg.Defaults.Owner, rem.Owner)
 	repoName := firstNonEmpty(ctx.GlobalFlags.Repo, os.Getenv("FORGE_REPO"), cfg.Defaults.Repo, rem.Repo)
+
+	// Commands read the resolved values back out of GlobalFlags so the whole
+	// chain (flag > env > config > git) is visible in one place.
+	ctx.GlobalFlags.Host = host
+	ctx.GlobalFlags.Owner = owner
+	ctx.GlobalFlags.Repo = repoName
 
 	explicitToken := firstNonEmpty(ctx.GlobalFlags.Token, cfg.Token)
 
@@ -129,6 +136,7 @@ func firstNonEmpty(vals ...string) string {
 func main() {
 	reg := cli.NewRegistry()
 	reg.Register(versionCmd{})
+	reg.Register(cmds.PRCommands()...)
 
 	base := &cli.Ctx{
 		Stdout:  os.Stdout,

@@ -51,7 +51,13 @@ func NewRegistry() *Registry {
 }
 
 // Register panics on duplicate Name().
-func (r *Registry) Register(c Command) {
+func (r *Registry) Register(cmds ...Command) {
+	for _, c := range cmds {
+		r.register(c)
+	}
+}
+
+func (r *Registry) register(c Command) {
 	name := c.Name()
 	if name == "" {
 		panic("cli: Register called with empty command Name()")
