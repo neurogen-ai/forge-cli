@@ -54,7 +54,7 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		Stdout: base.Stdout,
 		Stderr: base.Stderr,
 	}
-	ctx.GlobalFlags = GlobalFlags{TimeoutSeconds: 30} // default; config layer may override later
+	ctx.GlobalFlags = GlobalFlags{TimeoutSeconds: 0} // unset here; config layer owns the default (30s)
 
 	i := 0
 	for i < len(argv) {
