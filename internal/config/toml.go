@@ -75,8 +75,8 @@ func parseValue(s string, lineNo int) (string, error) {
 	if s == "" {
 		return "", fmt.Errorf("config: line %d: missing value", lineNo)
 	}
-	if s[0] == '"' {
-		end := strings.Index(s[1:], `"`)
+	if q := s[0]; q == '"' || q == '\'' {
+		end := strings.Index(s[1:], string(q))
 		if end < 0 {
 			return "", fmt.Errorf("config: line %d: unterminated string", lineNo)
 		}

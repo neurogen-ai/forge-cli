@@ -63,6 +63,13 @@ issue = relative/path
 			},
 		},
 		{
+			name: "bare word with mid-word apostrophe",
+			src: "[a]\nx = it's\n",
+			want: map[string]map[string]string{
+				"a": {"x": "it's"},
+			},
+		},
+		{
 			name:    "duplicate key in same section",
 			src:     "[a]\nx = \"1\"\nx = \"2\"\n",
 			wantErr: `config: line 3: duplicate key "x" in [a]`,
@@ -80,6 +87,34 @@ issue = relative/path
 		{
 			name:    "unterminated string",
 			src:     "[a]\nx = \"oops\n",
+			wantErr: "config: line 2: unterminated string",
+		},
+		{
+			name: "single-quoted literal string",
+			src:  "[defaults]\nowner = 'Neurogenesis Org'\n",
+			want: map[string]map[string]string{
+				"defaults": {"owner": "Neurogenesis Org"},
+			},
+		},
+		{
+			name: "apostrophe inside double quotes preserved",
+			src:  "[a]\nx = \"it's fine\"\n",
+			want: map[string]map[string]string{
+				"a": {"x": "it's fine"},
+			},
+		},
+		{
+			name: "double quote inside single quotes preserved",
+			src: `[a]
+x = 'say "hi"'
+`,
+			want: map[string]map[string]string{
+				"a": {"x": `say "hi"`},
+			},
+		},
+		{
+			name:    "unterminated single-quoted string",
+			src:     "[a]\nx = 'oops\n",
 			wantErr: "config: line 2: unterminated string",
 		},
 		{
