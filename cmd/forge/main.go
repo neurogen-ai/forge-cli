@@ -137,6 +137,7 @@ func main() {
 	reg := cli.NewRegistry()
 	reg.Register(versionCmd{})
 	reg.Register(cmds.PRCommands()...)
+	reg.Register(cmds.IssueCommands()...)
 
 	base := &cli.Ctx{
 		Stdout:  os.Stdout,
