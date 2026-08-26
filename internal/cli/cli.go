@@ -23,14 +23,27 @@ func (e *Error) Error() string {
 	return e.Msg + "\nhint: " + e.Hint
 }
 
-// Usage prints top-level help: one line per registered command plus the global flags.
+// Usage prints top-level help: one line per registered command family (or
+// standalone command) plus the global flags, pointing each family at -h.
 func Usage(w io.Writer, reg *Registry) {
 	fmt.Fprintln(w, "usage: forge [--host H] [--owner O] [--repo R] [--token T] [--config P] [--timeout S] [-v] <command> [args]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
+	seen := map[string]bool{}
 	for _, c := range reg.Sorted() {
-		fmt.Fprintf(w, "  %-24s %s\n", c.Name(), c.Summary())
+		name := c.Name()
+		if prefix, grouped := reg.GroupPrefix(name); grouped {
+			if seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
+			fmt.Fprintf(w, "  %-24s %s  (forge %s -h)\n", prefix, groupSummary[prefix], prefix)
+			continue
+		}
+		fmt.Fprintf(w, "  %-24s %s\n", name, c.Summary())
 	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "run `forge <command> -h` for details")
 }
 
 // Sorted returns commands ordered by Name for stable help output.
@@ -64,6 +77,10 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 			ctx.Verbose = true
 			i++
 			continue
+		case arg == "-h" || arg == "--help":
+			ctx.Help = true
+			i++
+			continue
 		case !strings.HasPrefix(arg, "--"):
 			// First non-flag token is the command path; stop flag parsing.
 		case arg == "--verbose":
@@ -81,6 +98,8 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 			if p, ok := valFlag[arg]; ok {
 				if i+1 >= len(argv) {
 					fmt.Fprintf(ctx.Stderr, "forge: %s requires a value\n", arg)
+					fmt.Fprintln(ctx.Stderr)
+					Usage(ctx.Stderr, reg)
 					return ExitUsage
 				}
 				*p = argv[i+1]
@@ -90,11 +109,15 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 			if arg == "--timeout" {
 				if i+1 >= len(argv) {
 					fmt.Fprintln(ctx.Stderr, "forge: --timeout requires an integer number of seconds")
+					fmt.Fprintln(ctx.Stderr)
+					Usage(ctx.Stderr, reg)
 					return ExitUsage
 				}
 				n, err := strconv.Atoi(argv[i+1])
 				if err != nil || n <= 0 {
 					fmt.Fprintln(ctx.Stderr, "forge: --timeout must be a positive integer")
+					fmt.Fprintln(ctx.Stderr)
+					Usage(ctx.Stderr, reg)
 					return ExitUsage
 				}
 				ctx.GlobalFlags.TimeoutSeconds = n
@@ -102,12 +125,18 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 				continue
 			}
 			fmt.Fprintf(ctx.Stderr, "forge: unknown global flag %s\n", arg)
+			fmt.Fprintln(ctx.Stderr)
+			Usage(ctx.Stderr, reg)
 			return ExitUsage
 		}
 		break
 	}
 
 	if i >= len(argv) {
+		if ctx.Help {
+			Usage(ctx.Stdout, reg)
+			return ExitOK
+		}
 		Usage(ctx.Stderr, reg)
 		return ExitUsage
 	}
@@ -124,10 +153,34 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 			consumed = 2
 		}
 	}
+	// -h/--help anywhere after the command path wins and swallows everything
+	// after it; following flags are ignored entirely and Prepare never runs.
+	wantsHelp := ctx.Help
+	for _, a := range argv[i+consumed:] {
+		if a == "-h" || a == "--help" {
+			wantsHelp = true
+			break
+		}
+	}
+
 	if cmd == nil {
+		// The command path does not resolve. When it names a family (bare
+		// `forge pr`), print that family's page instead of an error.
+		if prefix, ok := reg.GroupPrefix(path); ok {
+			reg.PrintGroupPage(ctx.Stdout, prefix)
+			return ExitOK
+		}
+		if wantsHelp {
+			Usage(ctx.Stdout, reg)
+			return ExitOK
+		}
 		fmt.Fprintf(ctx.Stderr, "forge: unknown command %q\n\n", path)
 		Usage(ctx.Stderr, reg)
 		return ExitUsage
+	}
+	if wantsHelp {
+		PrintHelp(ctx.Stdout, cmd)
+		return ExitOK
 	}
 
 	// Global flags are accepted after the command path too (users naturally
@@ -137,6 +190,8 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 	kept, err := applyGlobalArgs(rest, ctx)
 	if err != nil {
 		fmt.Fprintln(ctx.Stderr, err.Error())
+		fmt.Fprintln(ctx.Stderr)
+		PrintHelp(ctx.Stderr, cmd)
 		return ExitUsage
 	}
 
@@ -150,7 +205,13 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 	if err == nil {
 		return ExitOK
 	}
-	return reportError(ctx.Stderr, err)
+	code := reportError(ctx.Stderr, err)
+	var cerr *Error
+	if errors.As(err, &cerr) && cerr.Code == ExitUsage {
+		fmt.Fprintln(ctx.Stderr)
+		PrintHelp(ctx.Stderr, cmd)
+	}
+	return code
 }
 
 // applyGlobalArgs scans args for known global flags, applies them to ctx,
@@ -176,6 +237,9 @@ func applyGlobalArgs(args []string, ctx *Ctx) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "-h" || arg == "--help" {
+			continue // defense in depth; Run returns before this for real help
+		}
 		if arg == "-v" || arg == "--verbose" {
 			ctx.Verbose = true
 			continue

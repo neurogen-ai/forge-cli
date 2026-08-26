@@ -20,6 +20,7 @@ type Command interface {
 type Ctx struct {
 	Stdout, Stderr io.Writer
 	Verbose        bool
+	Help           bool
 	GlobalFlags    GlobalFlags
 
 	// Prepare, when non-nil, is called by Run after global flags are parsed and

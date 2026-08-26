@@ -12,8 +12,8 @@ type captureCmd struct {
 	gotCtx  *Ctx
 }
 
-func (c *captureCmd) Name() string        { return c.name }
-func (c *captureCmd) Summary() string     { return "capture" }
+func (c *captureCmd) Name() string    { return c.name }
+func (c *captureCmd) Summary() string { return "capture" }
 func (c *captureCmd) Run(args []string, ctx *Ctx) error {
 	c.gotArgs = args
 	c.gotCtx = ctx
@@ -88,5 +88,159 @@ func TestPreCommandParsingUnchanged(t *testing.T) {
 	}
 	if len(cmd.gotArgs) != 0 {
 		t.Fatalf("command args = %v, want empty", cmd.gotArgs)
+	}
+}
+
+// helpCmd is a fake command for the end-to-end help cases; one family member
+// per prefix keeps GroupPrefix satisfied in every fixture below.
+type helpCmd struct {
+	name    string
+	runErr  error
+	ran     bool
+	gotArgs []string
+}
+
+func (c *helpCmd) Name() string    { return c.name }
+func (c *helpCmd) Summary() string { return c.name + " does things" }
+func (c *helpCmd) Run(args []string, ctx *Ctx) error {
+	c.ran = true
+	c.gotArgs = args
+	return c.runErr
+}
+
+type helpRunResult struct {
+	stdout   string
+	stderr   string
+	prepared bool
+	code     int
+	do       *helpCmd
+}
+
+// runHelp runs argv against a registry holding "x do" and "x undo". runErr is
+// what "x do" returns if it executes.
+func runHelp(t *testing.T, argv []string, runErr error) helpRunResult {
+	t.Helper()
+	res := helpRunResult{do: &helpCmd{name: "x do", runErr: runErr}}
+	undo := &helpCmd{name: "x undo"}
+	var stdout, stderr strings.Builder
+	reg := NewRegistry()
+	reg.Register(res.do, undo)
+	base := &Ctx{
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Prepare: func(ctx *Ctx, cmd Command) error {
+			res.prepared = true
+			return nil
+		},
+	}
+	res.code = Run(argv, reg, base)
+	res.stdout = stdout.String()
+	res.stderr = stderr.String()
+	_ = undo
+	return res
+}
+
+func TestGroupHelpFlagListsFamilyPage(t *testing.T) {
+	res := runHelp(t, []string{"x", "-h"}, nil)
+	if res.code != ExitOK || res.prepared {
+		t.Fatalf("exit = %d prepared = %v; want 0, false", res.code, res.prepared)
+	}
+	if !strings.Contains(res.stdout, "use: forge x <subcommand>") ||
+		!strings.Contains(res.stdout, "does things") {
+		t.Fatalf("stdout missing x group page:\n%s", res.stdout)
+	}
+}
+
+func TestCommandHelpSkipsPrepare(t *testing.T) {
+	cmdErr := &Error{Code: ExitUsage, Msg: "would fail without args"}
+	res := runHelp(t, []string{"x", "do", "-h"}, cmdErr)
+	if res.code != ExitOK || res.prepared || res.do.ran {
+		t.Fatalf("exit=%d prepared=%v ran=%v; want 0,false,false", res.code, res.prepared, res.do.ran)
+	}
+	if !strings.HasPrefix(res.stdout, "use: forge x do") {
+		t.Fatalf("stdout should start with the command page:\n%s", res.stdout)
+	}
+}
+
+func TestUsageErrorPrintsCommandPage(t *testing.T) {
+	res := runHelp(t, []string{"x", "do"}, &Error{Code: ExitUsage, Msg: "boom"})
+	if res.code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", res.code, ExitUsage)
+	}
+	if !strings.Contains(res.stderr, "boom\n\nuse: forge x do") {
+		t.Fatalf("stderr missing error + blank line + page:\n%s", res.stderr)
+	}
+}
+
+func TestRuntimeErrorStaysOneLiner(t *testing.T) {
+	res := runHelp(t, []string{"x", "do"}, &Error{Code: ExitRuntime, Msg: "kaboom"})
+	if res.code != ExitRuntime {
+		t.Fatalf("exit = %d, want %d", res.code, ExitRuntime)
+	}
+	if !strings.Contains(res.stderr, "kaboom") {
+		t.Fatalf("stderr missing original message:\n%s", res.stderr)
+	}
+	if strings.Contains(res.stderr, "use: forge") || strings.Contains(res.stderr, "\n\n") {
+		t.Fatalf("runtime error must not print a help page:\n%s", res.stderr)
+	}
+}
+
+func TestBareFamilyPathShowsGroupPage(t *testing.T) {
+	res := runHelp(t, []string{"x"}, nil)
+	if res.code != ExitOK {
+		t.Fatalf("exit = %d, want %d", res.code, ExitOK)
+	}
+	if !strings.Contains(res.stdout, "use: forge x <subcommand>") {
+		t.Fatalf("stdout missing group page:\n%s", res.stdout)
+	}
+}
+
+func TestTrailingHelpSwallowsLaterArgs(t *testing.T) {
+	cmdErr := &Error{Code: ExitUsage, Msg: "never happens"}
+	res := runHelp(t, []string{"x", "do", "-h", "--title", "z"}, cmdErr)
+	if res.code != ExitOK || res.prepared || res.do.ran {
+		t.Fatalf("exit=%d prepared=%v ran=%v; want 0,false,false", res.code, res.prepared, res.do.ran)
+	}
+	if !strings.HasPrefix(res.stdout, "use: forge x do") {
+		t.Fatalf("stdout should be the command page ignoring later flags:\n%s", res.stdout)
+	}
+}
+
+func TestHelpOnlyArgPrintsUsageToStdout(t *testing.T) {
+	res := runHelp(t, []string{"-h"}, nil)
+	if res.code != ExitOK {
+		t.Fatalf("exit = %d, want %d", res.code, ExitOK)
+	}
+	if !strings.HasPrefix(res.stdout, "usage:") {
+		t.Fatalf("stdout missing top-level usage:\n%s", res.stdout)
+	}
+	if res.stderr != "" {
+		t.Fatalf("-h alone must not write to stderr:\n%s", res.stderr)
+	}
+}
+
+func TestMissingValueAfterResolvePrintsCommandPage(t *testing.T) {
+	res := runHelp(t, []string{"x", "do", "--timeout", "x"}, nil)
+	if res.code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", res.code, ExitUsage)
+	}
+	if !strings.Contains(res.stderr, "--timeout must be a positive integer\n\nuse: forge x do") {
+		t.Fatalf("stderr missing flag error + blank line + command page:\n%s", res.stderr)
+	}
+}
+
+func TestLeadingUnknownFlagKeepsTopLevelUsageOnly(t *testing.T) {
+	res := runHelp(t, []string{"--bogus", "x", "do"}, nil)
+	if res.code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", res.code, ExitUsage)
+	}
+	if !strings.Contains(res.stderr, "unknown global flag --bogus") {
+		t.Fatalf("stderr missing unknown-flag error:\n%s", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "commands:") {
+		t.Fatalf("stderr missing top-level usage:\n%s", res.stderr)
+	}
+	if strings.Contains(res.stderr, "use: forge x do") {
+		t.Fatalf("leading-flag failure must not print a command page:\n%s", res.stderr)
 	}
 }

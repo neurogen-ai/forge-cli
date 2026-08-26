@@ -64,7 +64,7 @@ issue = relative/path
 		},
 		{
 			name: "bare word with mid-word apostrophe",
-			src: "[a]\nx = it's\n",
+			src:  "[a]\nx = it's\n",
 			want: map[string]map[string]string{
 				"a": {"x": "it's"},
 			},
