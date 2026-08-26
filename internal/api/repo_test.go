@@ -17,9 +17,9 @@ func TestRepoExistsTrue(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "tok", 0, nil)
-	ok, err := c.RepoExists("o", "r")
-	if err != nil || !ok {
-		t.Fatalf("ok=%v err=%v, want true/nil", ok, err)
+	ok, notFound, err := c.RepoExists("o", "r")
+	if err != nil || !ok || notFound != nil {
+		t.Fatalf("ok=%v notFound=%v err=%v, want true/nil/nil", ok, notFound, err)
 	}
 	if want := "/api/v1/repos/o/r"; gotPath != want {
 		t.Fatalf("path = %q, want %q", gotPath, want)
@@ -33,12 +33,15 @@ func TestRepoExists404IsFalseNotError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok, err := NewClient(srv.URL, "tok", 0, nil).RepoExists("o", "missing")
+	ok, notFound, err := NewClient(srv.URL, "tok", 0, nil).RepoExists("o", "missing")
 	if err != nil {
 		t.Fatalf("404 must not be an error: %v", err)
 	}
 	if ok {
 		t.Fatal("404 must report false")
+	}
+	if notFound == nil || notFound.Status != 404 || notFound.Message != "Not Found" {
+		t.Fatalf("notFound = %v, want APIError{404, Not Found}", notFound)
 	}
 }
 
@@ -49,10 +52,10 @@ func TestRepoExistsOtherStatusesAreErrors(t *testing.T) {
 			w.WriteHeader(status)
 			w.Write([]byte(`{"message":"boom"}`))
 		}))
-		ok, err := NewClient(srv.URL, "bad", 0, nil).RepoExists("o", "r")
+		ok, notFound, err := NewClient(srv.URL, "bad", 0, nil).RepoExists("o", "r")
 		srv.Close()
-		if ok {
-			t.Fatalf("%d: ok=true, want false", status)
+		if ok || notFound != nil {
+			t.Fatalf("%d: ok=%v notFound=%v, want false/nil", status, ok, notFound)
 		}
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) || apiErr.Status != status {

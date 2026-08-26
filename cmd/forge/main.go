@@ -123,20 +123,9 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 	}
 	ctx.API = api.NewClient("https://"+host, token, time.Duration(timeout)*time.Second, logger)
 
-	// Verify the resolved repository actually exists at the endpoint so a
-	// typo'd host/owner/repo fails once, clearly, instead of per-command 404s.
-	exists, err := ctx.API.RepoExists(owner, repoName)
-	if err != nil {
-		return mapWiredErr(err)
-	}
-	if !exists {
-		return &cli.Error{
-			Code: cli.ExitContext,
-			Msg:  "repository not found",
-			Hint: fmt.Sprintf("%s/%s at %s does not exist; check the repo exists and that host/owner/repo are correct", owner, repoName, host),
-		}
-	}
-	return nil
+	// Staged preflight: pinpoint which layer (host, token, owner, repo) is
+	// wrong so a 404 never surfaces as a vague "target not found".
+	return diagnoseRepo(ctx.API, host, owner, repoName)
 }
 
 // mapWiredErr converts errors from the wiring-time repo check into typed cli
