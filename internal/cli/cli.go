@@ -120,19 +120,30 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		return ExitUsage
 	}
 
+	if base.Prepare != nil {
+		if err := base.Prepare(ctx, cmd); err != nil {
+			return reportError(ctx.Stderr, err)
+		}
+	}
+
 	err := cmd.Run(argv[i+1:], ctx)
 	if err == nil {
 		return ExitOK
 	}
+	return reportError(ctx.Stderr, err)
+}
+
+// reportError prints err and returns its mapped exit code.
+func reportError(w io.Writer, err error) int {
 	var cerr *Error
 	if errors.As(err, &cerr) {
 		if cerr.Hint != "" {
-			fmt.Fprintf(ctx.Stderr, "error: %s\nhint: %s\n", cerr.Msg, cerr.Hint)
+			fmt.Fprintf(w, "error: %s\nhint: %s\n", cerr.Msg, cerr.Hint)
 		} else {
-			fmt.Fprintf(ctx.Stderr, "error: %s\n", cerr.Msg)
+			fmt.Fprintf(w, "error: %s\n", cerr.Msg)
 		}
 		return cerr.Code
 	}
-	fmt.Fprintf(ctx.Stderr, "error: %v\n", err)
+	fmt.Fprintf(w, "error: %v\n", err)
 	return ExitRuntime
 }

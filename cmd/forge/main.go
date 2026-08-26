@@ -1,10 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
+	"time"
 
+	"forge/internal/api"
+	"forge/internal/auth"
 	"forge/internal/cli"
+	"forge/internal/config"
+	"forge/internal/gitctx"
 )
 
 // versionCmd is a builtin placeholder; real commands arrive in later branches.
@@ -17,13 +25,115 @@ func (versionCmd) Run(args []string, ctx *cli.Ctx) error {
 	return nil
 }
 
+// stderrLogger is a minimal verbose sink; the polished request-line format
+// (method url -> status (ms)) arrives in Branch I.
+type stderrLogger struct{ w io.Writer }
+
+func (l stderrLogger) Logf(format string, args ...any) {
+	fmt.Fprintf(l.w, "forge: "+format+"\n", args...)
+}
+
+// wire resolves configuration, git context, and (for commands that need it)
+// auth plus an API client into ctx before Command.Run. Resolution order per
+// key is flag > env > local config > global config > git-derived; Load already
+// merges local over global, so one cfg lookup covers positions 3 and 4.
+func wire(ctx *cli.Ctx, cmd cli.Command) error {
+	var repo *gitctx.Repo
+	if r, err := gitctx.Detect(); err == nil {
+		repo = &r
+	}
+	localPath := ""
+	if repo != nil {
+		localPath = config.LocalPath(repo.Root)
+	}
+	globalPath := ctx.GlobalFlags.ConfigPath
+	if globalPath == "" {
+		globalPath = config.DefaultGlobalPath()
+	}
+	cfg, err := config.Load(globalPath, localPath, true)
+	if err != nil {
+		return &cli.Error{Code: cli.ExitRuntime, Msg: err.Error()}
+	}
+	ctx.Cfg = cfg
+	ctx.Repo = repo
+
+	var rem gitctx.Remote // zero value when outside a repo or no origin
+	if repo != nil && repo.OriginURL != "" {
+		if parsed, perr := gitctx.ParseRemoteURL(repo.OriginURL); perr == nil {
+			rem = parsed
+		}
+	}
+
+	host := firstNonEmpty(ctx.GlobalFlags.Host, os.Getenv("FORGE_HOST"), cfg.Defaults.Host, rem.Host)
+	owner := firstNonEmpty(ctx.GlobalFlags.Owner, os.Getenv("FORGE_OWNER"), cfg.Defaults.Owner, rem.Owner)
+	repoName := firstNonEmpty(ctx.GlobalFlags.Repo, os.Getenv("FORGE_REPO"), cfg.Defaults.Repo, rem.Repo)
+
+	explicitToken := firstNonEmpty(ctx.GlobalFlags.Token, cfg.Token)
+
+	if !cli.RequiresAPI(cmd) {
+		return nil
+	}
+
+	var missing []string
+	if host == "" {
+		missing = append(missing, "host")
+	}
+	if owner == "" {
+		missing = append(missing, "owner")
+	}
+	if repoName == "" {
+		missing = append(missing, "repo")
+	}
+	if len(missing) > 0 {
+		return &cli.Error{
+			Code: cli.ExitContext,
+			Msg:  "cannot determine " + strings.Join(missing, ", "),
+			Hint: "run inside a repository with an origin remote, or pass --host/--owner/--repo",
+		}
+	}
+
+	token, err := auth.Resolve(host, explicitToken)
+	if err != nil {
+		if errors.Is(err, auth.ErrNoToken) {
+			return &cli.Error{
+				Code: cli.ExitAuth,
+				Msg:  "no token found",
+				Hint: "check your git credential helper stores a token for this host, or pass --token",
+			}
+		}
+		return &cli.Error{Code: cli.ExitAuth, Msg: err.Error()}
+	}
+
+	timeout := ctx.GlobalFlags.TimeoutSeconds
+	if timeout == 0 {
+		timeout = cfg.TimeoutSeconds
+	}
+	var logger api.Logger
+	if ctx.Verbose {
+		logger = stderrLogger{w: ctx.Stderr}
+	}
+	ctx.API = api.NewClient("https://"+host, token, time.Duration(timeout)*time.Second, logger)
+	return nil
+}
+
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func main() {
 	reg := cli.NewRegistry()
 	reg.Register(versionCmd{})
 
-	ctx := &cli.Ctx{
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+	base := &cli.Ctx{
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
+		Prepare: wire,
 	}
 
 	if len(os.Args) <= 1 {
@@ -31,5 +141,5 @@ func main() {
 		os.Exit(cli.ExitOK)
 	}
 
-	os.Exit(cli.Run(os.Args[1:], reg, ctx))
+	os.Exit(cli.Run(os.Args[1:], reg, base))
 }

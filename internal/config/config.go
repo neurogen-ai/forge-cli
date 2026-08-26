@@ -15,6 +15,9 @@ type Defaults struct{ Host, Owner, Repo, Base string }
 type Config struct {
 	Defaults Defaults
 	Savedirs map[string]string // key: "pr-conversation", "issue"
+	// Token comes from [auth] token (repo-local first, then global; PRD §5
+	// chain positions 3 and 4). "" when absent.
+	Token string
 	// TimeoutSeconds defaults to 30 when absent from both layers.
 	TimeoutSeconds int
 }
@@ -88,6 +91,13 @@ func merge(cfg *Config, sections map[string]map[string]string, expandHome bool) 
 			return err
 		}
 		cfg.Savedirs[key] = v
+	}
+	if raw, ok := sections["auth"]["token"]; ok {
+		v, err := expand(raw, expandHome)
+		if err != nil {
+			return err
+		}
+		cfg.Token = v
 	}
 	if raw, ok := sections["api"]["timeout_seconds"]; ok {
 		n, err := strconv.Atoi(raw)
