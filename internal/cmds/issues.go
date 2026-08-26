@@ -68,6 +68,13 @@ func (issueCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 	return writeJSON(ctx.Stdout, iss)
 }
 
+func (issueCreateCmd) HelpPage() string {
+	return `use: forge issue create --title T [--body TEXT] [--label NAME]...
+
+Open an issue. --label repeats; names must exist on the repo (unknown names
+are rejected before the request is sent).`
+}
+
 // ---- issue get ----
 
 type issueGetCmd struct{}
@@ -88,9 +95,21 @@ func (issueGetCmd) Run(args []string, ctx *cli.Ctx) error {
 	return writeJSON(ctx.Stdout, iss)
 }
 
+func (issueGetCmd) HelpPage() string {
+	return `use: forge issue get N
+
+Print one issue as JSON.`
+}
+
 // ---- issue list ----
 
 type issueListCmd struct{}
+
+func (issueListCmd) HelpPage() string {
+	return `use: forge issue list [--state open|closed|all] [--page N] [--limit M]
+
+List issues as a JSON array. Defaults: state open, page 1, no limit.`
+}
 
 func (issueListCmd) Name() string      { return "issue list" }
 func (issueListCmd) Summary() string   { return "list issues as a JSON array [--state --page --limit]" }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"forge/internal/cli"
@@ -75,5 +76,18 @@ func TestIssueListSendsTypeIssues(t *testing.T) {
 	}
 	if gotQuery != "page=1&type=issues" {
 		t.Errorf("query = %q", gotQuery)
+	}
+}
+
+func TestIssueCommandsHaveHelpPages(t *testing.T) {
+	for _, c := range IssueCommands() {
+		pageCmd, ok := c.(interface{ HelpPage() string })
+		if !ok {
+			t.Errorf("%s does not implement HelpPage", c.Name())
+			continue
+		}
+		if got := pageCmd.HelpPage(); !strings.HasPrefix(got, "use: forge "+c.Name()) {
+			t.Errorf("%s help page must start with its synopsis, got %q", c.Name(), got)
+		}
 	}
 }

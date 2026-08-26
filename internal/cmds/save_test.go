@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/api"
@@ -121,5 +122,35 @@ func TestCacheFlushRequiresYesForOutsideRoot(t *testing.T) {
 	err = (cacheFlushCmd{}).Run([]string{"--yes"}, ctx)
 	if err != nil {
 		t.Fatalf("--yes flush failed: %v", err)
+	}
+}
+
+func TestSaveCommandsHaveHelpPages(t *testing.T) {
+	for _, c := range SaveCommands() {
+		pageCmd, ok := c.(interface{ HelpPage() string })
+		if !ok {
+			t.Errorf("%s does not implement HelpPage", c.Name())
+			continue
+		}
+		if got := pageCmd.HelpPage(); !strings.HasPrefix(got, "use: forge "+c.Name()) {
+			t.Errorf("%s help page must start with its synopsis, got %q", c.Name(), got)
+		}
+	}
+}
+
+func TestSaveCmdPagesDifferByKind(t *testing.T) {
+	for _, c := range SaveCommands() {
+		s, ok := c.(saveCmd)
+		if !ok {
+			t.Fatalf("unexpected type %T", c)
+		}
+		if _, ok := any(s).(interface{ HelpPage() string }); !ok {
+			t.Fatal("saveCmd lost its HelpPage method")
+		}
+	}
+	prPage := saveCmd{kind: "pr-conversation"}.HelpPage()
+	issuePage := saveCmd{kind: "issue"}.HelpPage()
+	if prPage == issuePage {
+		t.Fatal("both saveCmd kinds return the same help page")
 	}
 }

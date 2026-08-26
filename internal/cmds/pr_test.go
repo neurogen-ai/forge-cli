@@ -284,3 +284,16 @@ func TestPRCreateSuccessNoProbes(t *testing.T) {
 		t.Errorf("branch probes on happy path = %d, want 0", *hits)
 	}
 }
+
+func TestPRCommandsHaveHelpPages(t *testing.T) {
+	for _, c := range PRCommands() {
+		pageCmd, ok := c.(interface{ HelpPage() string })
+		if !ok {
+			t.Errorf("%s does not implement HelpPage", c.Name())
+			continue
+		}
+		if got := pageCmd.HelpPage(); !strings.HasPrefix(got, "use: forge "+c.Name()) {
+			t.Errorf("%s help page must start with its synopsis, got %q", c.Name(), got)
+		}
+	}
+}

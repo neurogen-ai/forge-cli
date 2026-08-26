@@ -201,6 +201,16 @@ func mapCreateErr(ctx *cli.Ctx, owner, repo, head, base string, err error) error
 
 // ---- pr get ----
 
+func (prCreateCmd) HelpPage() string {
+	return `use: forge pr create --title T [--head B] [--base B] [--body TEXT]
+
+Open a pull request. Head defaults to $FORGE_HEAD, then your current git
+branch. Base defaults to $FORGE_BASE, then [defaults] base in config.
+
+A 404 here is diagnosed: missing base branch, missing head branch, or pull
+requests disabled for the repo.`
+}
+
 type prGetCmd struct{}
 
 func (prGetCmd) Name() string      { return "pr get" }
@@ -221,6 +231,12 @@ func (prGetCmd) Run(args []string, ctx *cli.Ctx) error {
 
 // ---- pr list ----
 
+func (prGetCmd) HelpPage() string {
+	return `use: forge pr get N
+
+Print one pull request as JSON. N is the PR number.`
+}
+
 type prListCmd struct{}
 
 func (prListCmd) Name() string { return "pr list" }
@@ -238,6 +254,12 @@ func (prListCmd) Run(args []string, ctx *cli.Ctx) error {
 		return mapErr(err)
 	}
 	return writeJSON(ctx.Stdout, prs)
+}
+
+func (prListCmd) HelpPage() string {
+	return `use: forge pr list [--state open|closed|all] [--page N] [--limit M]
+
+List pull requests as a JSON array. Defaults: state open, page 1, no limit.`
 }
 
 // ---- pr conversation ----
@@ -272,6 +294,15 @@ func (prConvCmd) Run(args []string, ctx *cli.Ctx) error {
 		return writeJSON(ctx.Stdout, flattenConversation(comments, reviews, perReview))
 	}
 	return writeJSON(ctx.Stdout, groupedPayload(comments, reviews, perReview))
+}
+
+func (prConvCmd) HelpPage() string {
+	return `use: forge pr conversation N [--format flat|grouped]
+
+Print a PR's comments, reviews, and inline review comments as JSON.
+--format grouped (default) nests review comments under their review;
+--format flat merges everything into one created_at-sorted array with a
+"kind" field per item.`
 }
 
 // PRCommands returns the pr subcommands for registration in main.

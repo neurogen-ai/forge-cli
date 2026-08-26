@@ -28,6 +28,17 @@ func (c saveCmd) Summary() string {
 	return "fetch a PR conversation and write it as JSON to the configured savedir (usage: save pr-conversation N [--dir])"
 }
 
+func (c saveCmd) HelpPage() string {
+	if c.kind == "issue" {
+		return `use: forge save issue N [--dir DIR]
+
+Fetch one issue and write pretty-printed JSON to the configured savedir.
+Dir resolution: --dir, then [savedir] issue in config. Prints the written
+file path on stdout.`
+	}
+	return "use: forge save pr-conversation N [--dir DIR]\n\nFetch a PR conversation (same payload as `pr conversation --format grouped`)\nand write it as JSON to the configured savedir. Dir resolution: --dir, then\n[savedir] pr-conversation in config. Prints the written file path on stdout."
+}
+
 func (c saveCmd) RequiresAPI() bool { return true }
 
 // savedirFor resolves the target directory: --dir flag, then cfg Savedirs,

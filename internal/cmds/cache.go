@@ -16,6 +16,12 @@ func (cachePathCmd) Name() string      { return "cache path" }
 func (cachePathCmd) Summary() string   { return "print resolved savedir paths, one per line" }
 func (cachePathCmd) RequiresAPI() bool { return false } // never triggers auth or host validation
 
+func (cachePathCmd) HelpPage() string {
+	return `use: forge cache path
+
+Print every resolved savedir path, one per line. Never contacts the server.`
+}
+
 func (cachePathCmd) Run(args []string, ctx *cli.Ctx) error {
 	root, err := resolveRoot(ctx)
 	if err != nil {
@@ -33,6 +39,14 @@ func (cachePathCmd) Run(args []string, ctx *cli.Ctx) error {
 type cacheFlushCmd struct{}
 
 func (cacheFlushCmd) Name() string { return "cache flush" }
+
+func (cacheFlushCmd) HelpPage() string {
+	return `use: forge cache flush [--yes]
+
+Delete cached JSON files in every configured savedir, printing each removed
+path. Paths outside the repository root require --yes.`
+}
+
 func (cacheFlushCmd) Summary() string {
 	return "delete cached JSON files in every savedir [--yes for outside-root dirs]"
 }

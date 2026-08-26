@@ -21,6 +21,9 @@ type versionCmd struct{}
 
 func (versionCmd) Name() string    { return "version" }
 func (versionCmd) Summary() string { return "print the forge-cli version" }
+func (versionCmd) HelpPage() string {
+	return "use: forge version\n\nPrint the forge-cli version."
+}
 func (versionCmd) Run(args []string, ctx *cli.Ctx) error {
 	fmt.Fprintln(ctx.Stdout, "forge-cli v0.1")
 	return nil
