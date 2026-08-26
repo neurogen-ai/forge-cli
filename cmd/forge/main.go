@@ -138,6 +138,8 @@ func main() {
 	reg.Register(versionCmd{})
 	reg.Register(cmds.PRCommands()...)
 	reg.Register(cmds.IssueCommands()...)
+	reg.Register(cmds.SaveCommands()...)
+	reg.Register(cmds.CacheCommands()...)
 
 	base := &cli.Ctx{
 		Stdout:  os.Stdout,

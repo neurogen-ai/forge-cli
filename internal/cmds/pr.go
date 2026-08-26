@@ -229,24 +229,7 @@ func (prConvCmd) Run(args []string, ctx *cli.Ctx) error {
 	if format == "flat" {
 		return writeJSON(ctx.Stdout, flattenConversation(comments, reviews, perReview))
 	}
-
-	out := groupedConversation{Comments: comments, Reviews: make([]groupedReview, 0, len(reviews))}
-	for _, rev := range reviews {
-		gr := groupedReview{
-			ID: rev.ID, User: rev.User, State: rev.State, Body: rev.Body,
-			SubmittedAt: rev.SubmittedAt, CreatedAt: rev.CreatedAt,
-			Comments: make([]flatItem, 0, len(perReview[rev.ID])),
-		}
-		for _, rc := range perReview[rev.ID] {
-			gr.Comments = append(gr.Comments, flatItem{
-				Kind: "review-comment", ID: rc.ID, User: rc.User, Body: rc.Body,
-				CreatedAt: rc.CreatedAt, Path: rc.Path, DiffHunk: rc.DiffHunk,
-				ReviewID: rev.ID,
-			})
-		}
-		out.Reviews = append(out.Reviews, gr)
-	}
-	return writeJSON(ctx.Stdout, out)
+	return writeJSON(ctx.Stdout, groupedPayload(comments, reviews, perReview))
 }
 
 // PRCommands returns the pr subcommands for registration in main.

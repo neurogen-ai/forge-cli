@@ -1,0 +1,82 @@
+package cmds
+
+import (
+	"fmt"
+	"os"
+
+	"forge/internal/cli"
+	"forge/internal/store"
+)
+
+// ---- cache path ----
+
+type cachePathCmd struct{}
+
+func (cachePathCmd) Name() string      { return "cache path" }
+func (cachePathCmd) Summary() string   { return "print resolved savedir paths, one per line" }
+func (cachePathCmd) RequiresAPI() bool { return false } // never triggers auth or host validation
+
+func (cachePathCmd) Run(args []string, ctx *cli.Ctx) error {
+	root, err := resolveRoot(ctx)
+	if err != nil {
+		return err
+	}
+	home, _ := os.UserHomeDir()
+	for _, dir := range store.ResolveDirs(ctx.Cfg.Savedirs, root, home) {
+		fmt.Fprintln(ctx.Stdout, dir)
+	}
+	return nil
+}
+
+// ---- cache flush ----
+
+type cacheFlushCmd struct{}
+
+func (cacheFlushCmd) Name() string { return "cache flush" }
+func (cacheFlushCmd) Summary() string {
+	return "delete cached JSON files in every savedir [--yes for outside-root dirs]"
+}
+func (cacheFlushCmd) RequiresAPI() bool { return false }
+
+func (cacheFlushCmd) Run(args []string, ctx *cli.Ctx) error {
+	root, err := resolveRoot(ctx)
+	if err != nil {
+		return err
+	}
+	home, _ := os.UserHomeDir()
+	dirs := store.ResolveDirs(ctx.Cfg.Savedirs, root, home)
+
+	removed, err := store.Flush(root, dirs, false)
+	if err != nil && !flagBool(args, "--yes") {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  err.Error(),
+			Hint: "re-run with --yes to delete these paths",
+		}
+	}
+	if err != nil {
+		removed, err = store.Flush(root, dirs, true)
+		if err != nil {
+			return mapErr(err)
+		}
+	}
+	for _, p := range removed {
+		fmt.Fprintln(ctx.Stdout, p)
+	}
+	return nil
+}
+
+// flagBool reports whether a boolean flag is present in args.
+func flagBool(args []string, name string) bool {
+	for _, a := range args {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
+// CacheCommands registers the cache subcommands.
+func CacheCommands() []cli.Command {
+	return []cli.Command{cachePathCmd{}, cacheFlushCmd{}}
+}
