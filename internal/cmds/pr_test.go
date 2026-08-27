@@ -52,7 +52,11 @@ func TestPRGetRequiresNumber(t *testing.T) {
 }
 
 func TestPRCreateRequiresTitle(t *testing.T) {
-	err := (prCreateCmd{}).Run([]string{}, nil)
+	t.Setenv("FORGE_HEAD", "")
+	t.Setenv("FORGE_BASE", "")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer ts.Close()
+	err := (prCreateCmd{}).Run([]string{}, testCtx(ts))
 	cerr, ok := err.(*cli.Error)
 	if !ok || cerr.Code != cli.ExitUsage {
 		t.Fatalf("want ExitUsage, got %v", err)
