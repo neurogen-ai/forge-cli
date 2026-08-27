@@ -44,6 +44,14 @@ func prListRows(prs []api.PullRequest) [][]string {
 	return rows
 }
 
+var reviewListColumns = []table.Column{
+	{Name: "REVIEW", Width: 8},
+	{Name: "USER", Width: 14},
+	{Name: "STATE", Width: 15},
+	{Name: "UNRESOLVED", Width: 10},
+	{Name: "TOTAL", Width: 7},
+}
+
 // issueListRows mirrors prListRows over api.Issue; UPDATED column omitted there by spec.
 func issueListRows(iss []api.Issue) [][]string {
 	rows := make([][]string, 0, len(iss))
