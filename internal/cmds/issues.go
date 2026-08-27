@@ -133,9 +133,57 @@ func (issueListCmd) Run(args []string, ctx *cli.Ctx) error {
 	return table.Render(ctx.Stdout, issueListColumns, issueListRows(issues))
 }
 
+// ---- issue close/open ----
+
+type issueStateCmd struct{ closing bool }
+
+func (c issueStateCmd) Name() string {
+	if c.closing {
+		return "issue close"
+	}
+	return "issue open"
+}
+func (c issueStateCmd) Summary() string {
+	if c.closing {
+		return "close an issue (usage: issue close N)"
+	}
+	return "reopen an issue (usage: issue open N)"
+}
+func (issueStateCmd) RequiresAPI() bool { return true }
+
+func (c issueStateCmd) HelpPage() string {
+	if c.closing {
+		return `use: forge issue close N
+
+Close issue N.`
+	}
+	return `use: forge issue open N
+
+Reopen (re-open) issue N.`
+}
+
+func (c issueStateCmd) Run(args []string, ctx *cli.Ctx) error {
+	name := "issue open"
+	state := "open"
+	if c.closing {
+		name = "issue close"
+		state = "closed"
+	}
+	n, err := parseIndex(args, name)
+	if err != nil {
+		return err
+	}
+	iss, err := ctx.API.SetIssueState(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, state)
+	if err != nil {
+		return mapErr(err)
+	}
+	return writeJSON(ctx.Stdout, iss)
+}
+
 // IssueCommands returns the issue subcommands for registration in main.
 func IssueCommands() []cli.Command {
 	return []cli.Command{
 		issueCreateCmd{}, issueGetCmd{}, issueListCmd{},
+		issueStateCmd{closing: true}, issueStateCmd{closing: false},
 	}
 }
