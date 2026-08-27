@@ -129,9 +129,8 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 		fmt.Fprintf(ctx.Stderr, "warning: connecting over insecure %s\n", baseURL)
 	}
 	ctx.API = api.NewClient(baseURL, token, time.Duration(timeout)*time.Second, logger)
-	// Staged diagnosis no longer runs here: wire proceeds naively and the
-	// four-stage probes fire only after a command fails (v0.2.0). mapWiredErr
-	// still maps probe-time errors for that later diagnosis path.
+	ctx.Diagnose = diagnoseClosure(ctx.API, host, owner, repoName)
+
 	return nil
 }
 

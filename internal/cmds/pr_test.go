@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"forge/internal/api"
@@ -295,5 +296,31 @@ func TestPRCommandsHaveHelpPages(t *testing.T) {
 		if got := pageCmd.HelpPage(); !strings.HasPrefix(got, "use: forge "+c.Name()) {
 			t.Errorf("%s help page must start with its synopsis, got %q", c.Name(), got)
 		}
+	}
+}
+
+// v0.2.0 lazy-diagnosis pinning: a successful pr list makes exactly one API
+// call, the pulls endpoint itself. No version/token/owner/repo preflight.
+func TestPRListMakesNoPreflightCalls(t *testing.T) {
+	var mu sync.Mutex
+	paths := map[string]bool{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths[r.URL.Path] = true
+		mu.Unlock()
+		if r.URL.Path != "/api/v1/repos/o/r/pulls" {
+			t.Errorf("unexpected request %s %s: only the pulls list is allowed", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `[{"number":1}]`)
+	}))
+	defer ts.Close()
+
+	if err := (prListCmd{}).Run([]string{}, testCtx(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || !paths["/api/v1/repos/o/r/pulls"] {
+		t.Fatalf("distinct paths hit = %v; want exactly {/api/v1/repos/o/r/pulls}", paths)
 	}
 }

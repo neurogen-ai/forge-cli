@@ -244,3 +244,75 @@ func TestLeadingUnknownFlagKeepsTopLevelUsageOnly(t *testing.T) {
 		t.Fatalf("leading-flag failure must not print a command page:\n%s", res.stderr)
 	}
 }
+
+// Diagnose-hook cases for v0.2.0 lazy diagnosis: the hook runs only after a
+// Runtime/Network failure, never on Auth/Context exits whose messages already
+// name the culprit.
+
+func TestDiagnoseAfterRuntimeFailure(t *testing.T) {
+	var stdout, stderr strings.Builder
+	reg := NewRegistry()
+	reg.Register(&helpCmd{name: "x do", runErr: &Error{Code: ExitRuntime, Msg: "boom"}})
+	code := Run([]string{"x", "do"}, reg, &Ctx{
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		Diagnose: func() *Error { return &Error{Msg: "repo X", Hint: "check owner"} },
+	})
+	if code != ExitRuntime {
+		t.Fatalf("exit = %d, want %d (diagnosis must not upgrade the code)", code, ExitRuntime)
+	}
+	err := stderr.String()
+	i := strings.Index(err, "boom")
+	j := strings.Index(err, "repo X")
+	if i < 0 || j < i || !strings.Contains(err[i:j], "\n\n") {
+		t.Fatalf("stderr must show boom, blank line, then repo X:\n%s", err)
+	}
+	if !strings.Contains(err, "hint: check owner") {
+		t.Fatalf("stderr missing diagnosis hint:\n%s", err)
+	}
+}
+
+func TestDiagnoseNilSilent(t *testing.T) {
+	var stdout, stderr strings.Builder
+	reg := NewRegistry()
+	reg.Register(&helpCmd{name: "x do", runErr: &Error{Code: ExitNetwork, Msg: "boom"}})
+	code := Run([]string{"x", "do"}, reg, &Ctx{
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		Diagnose: func() *Error { return nil },
+	})
+	if code != ExitNetwork {
+		t.Fatalf("exit = %d, want %d", code, ExitNetwork)
+	}
+	err := stderr.String()
+	if strings.Count(err, "boom") != 1 || strings.Contains(strings.TrimPrefix(err, "error: "), "\n\n") {
+		t.Fatalf("nil diagnose must add nothing beyond the original one-liner:\n%q", err)
+	}
+}
+
+func TestDiagnoseSkippedOnAuthAndContextExits(t *testing.T) {
+	for _, c := range []int{ExitAuth, ExitContext} {
+		called := 0
+		var stderr strings.Builder
+		reg := NewRegistry()
+		reg.Register(&helpCmd{name: "x do", runErr: &Error{Code: c, Msg: "culprit named", Hint: "fix it"}})
+		code := Run([]string{"x", "do"}, reg, &Ctx{
+			Stdout: &strings.Builder{},
+			Stderr: &stderr,
+			Diagnose: func() *Error {
+				called++
+				return nil
+			},
+		})
+		if code != c {
+			t.Fatalf("code %d: exit = %d, want %d", c, code, c)
+		}
+		if called != 0 {
+			t.Errorf("code %d: Diagnose called %d times, want 0 (exit already names the culprit)", c, called)
+		}
+		err := stderr.String()
+		if strings.Count(err, "hint:") != 1 || !strings.Contains(err, "culprit named") {
+			t.Errorf("code %d: unexpected output:\n%s", c, err)
+		}
+	}
+}

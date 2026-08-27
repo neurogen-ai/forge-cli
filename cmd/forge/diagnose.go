@@ -39,6 +39,23 @@ func diagnoseRepo(p repoProbes, host, owner, repoName string) error {
 	return nil
 }
 
+// diagnoseClosure returns the Ctx.Diagnose implementation for an API command:
+// run the four-stage probes; on a pinpointed layer return that typed error;
+// when every stage passes return the explicit "failed to diagnose" outcome
+// rather than silence.
+func diagnoseClosure(p repoProbes, host, owner, repoName string) func() *cli.Error {
+	return func() *cli.Error {
+		if err := diagnoseRepo(p, host, owner, repoName); err != nil {
+			return asCLI(err)
+		}
+		return &cli.Error{
+			Code: cli.ExitRuntime,
+			Msg:  "failed to diagnose",
+			Hint: "host, token, owner, and repository all verify OK; the reported failure is specific to the request itself",
+		}
+	}
+}
+
 // checkHost is stage 1: is the host a Forgejo/Gitea server at all? A nil
 // return means GET /api/v1/version answered 2xx.
 func checkHost(p repoProbes, host string) *cli.Error {

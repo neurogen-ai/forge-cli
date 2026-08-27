@@ -29,6 +29,12 @@ type Ctx struct {
 	// exit codes exactly like command errors.
 	Prepare func(ctx *Ctx, cmd Command) error
 
+	// Diagnose re-runs the staged host/token/owner/repo probes after a
+	// command has already failed. It is set only for API commands. Returns
+	// nil when nothing further should be printed (call sites are expected
+	// to have wrapped diagnose-all-clear outcomes themselves).
+	Diagnose func() *Error
+
 	// API is nil unless Prepare built it (commands requiring network).
 	API *api.Client
 	// Cfg is the merged two-layer config; always set once Prepare ran.

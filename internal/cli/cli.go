@@ -64,8 +64,9 @@ func (r *Registry) Sorted() []Command {
 // the rest as args, and maps command errors onto exit codes.
 func Run(argv []string, reg *Registry, base *Ctx) int {
 	ctx := &Ctx{
-		Stdout: base.Stdout,
-		Stderr: base.Stderr,
+		Stdout:   base.Stdout,
+		Stderr:   base.Stderr,
+		Diagnose: base.Diagnose,
 	}
 	ctx.GlobalFlags = GlobalFlags{TimeoutSeconds: 0} // unset here; config layer owns the default (30s)
 
@@ -207,9 +208,22 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 	}
 	code := reportError(ctx.Stderr, err)
 	var cerr *Error
-	if errors.As(err, &cerr) && cerr.Code == ExitUsage {
-		fmt.Fprintln(ctx.Stderr)
-		PrintHelp(ctx.Stderr, cmd)
+	if errors.As(err, &cerr) {
+		switch cerr.Code {
+		case ExitUsage:
+			fmt.Fprintln(ctx.Stderr)
+			PrintHelp(ctx.Stderr, cmd)
+		case ExitRuntime, ExitNetwork:
+			if ctx.Diagnose != nil {
+				if d := ctx.Diagnose(); d != nil {
+					fmt.Fprintln(ctx.Stderr)
+					fmt.Fprintln(ctx.Stderr, d.Msg)
+					if d.Hint != "" {
+						fmt.Fprintf(ctx.Stderr, "hint: %s\n", d.Hint)
+					}
+				}
+			}
+		}
 	}
 	return code
 }

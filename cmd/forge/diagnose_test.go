@@ -187,3 +187,39 @@ func portOf(srv *httptest.Server) string {
 	}
 	return u
 }
+
+func TestDiagnoseClosureAllClear(t *testing.T) {
+	f := &probeFake{user: &api.User{Login: O}, repoExists: true}
+	closure := diagnoseClosure(f, H, O, R)
+	err := closure()
+	if err == nil {
+		t.Fatal("closure must not return nil when diagnosis is clear; expect explicit failed-to-diagnose")
+	}
+	var e *cli.Error
+	if !errors.As(err, &e) || e.Msg != "failed to diagnose" {
+		t.Fatalf("err = %v, want Msg \"failed to diagnose\"", err)
+	}
+	if e.Hint == "" {
+		t.Fatal("Hint must be non-empty")
+	}
+}
+
+func TestDiagnoseClosureSurfacesTokenFailure(t *testing.T) {
+	f := &probeFake{userErr: &api.APIError{Status: 401, Message: "token rejected"}}
+	err := diagnoseClosure(f, H, O, R)()
+	wantCode(t, err, cli.ExitAuth)
+	if strings.Contains(err.Error(), "failed to diagnose") {
+		t.Fatalf("token-stage error must surface verbatim: %v", err)
+	}
+}
+
+func TestDiagnoseClosureSurfacesRepoFailure(t *testing.T) {
+	f := &probeFake{user: &api.User{Login: "bob"}, repoExists: false}
+	err := diagnoseClosure(f, H, O, R)()
+	if err == nil {
+		t.Fatal("repository-not-found error must surface")
+	}
+	if strings.Contains(err.Error(), "failed to diagnose") {
+		t.Fatalf("repo-stage error must surface verbatim: %v", err)
+	}
+}
