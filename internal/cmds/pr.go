@@ -210,6 +210,7 @@ func PRCommands() []cli.Command {
 		prCreateCmd{}, createBatchCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
 		reviewListCmd{}, reviewSubmitCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
+		commentAddCmd{kind: "pr"},
 		deprecatedPrConvCmd{},
 	}
 }
