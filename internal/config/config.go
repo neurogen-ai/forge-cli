@@ -20,6 +20,9 @@ type Config struct {
 	Token string
 	// TimeoutSeconds defaults to 30 when absent from both layers.
 	TimeoutSeconds int
+	// Protocol is [api] protocol: "http" or "https". "" means https (the
+	// default). An embedded scheme in --host overrides it.
+	Protocol string
 }
 
 // Default savedirs per PRD §7. Load seeds these so callers never need to
@@ -98,6 +101,14 @@ func merge(cfg *Config, sections map[string]map[string]string, expandHome bool) 
 			return err
 		}
 		cfg.Token = v
+	}
+	if raw, ok := sections["api"]["protocol"]; ok {
+		switch raw {
+		case "", "http", "https":
+			cfg.Protocol = raw
+		default:
+			return fmt.Errorf("api.protocol: %q must be \"http\" or \"https\"", raw)
+		}
 	}
 	if raw, ok := sections["api"]["timeout_seconds"]; ok {
 		n, err := strconv.Atoi(raw)

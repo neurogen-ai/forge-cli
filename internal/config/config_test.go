@@ -133,3 +133,35 @@ func TestLocalPath(t *testing.T) {
 		t.Errorf("LocalPath = %q, want %q", got, want)
 	}
 }
+
+func TestLoadAPIProtocol(t *testing.T) {
+	local := t.TempDir() + "/local.toml"
+	write(t, local, "[api]\nprotocol = \"http\"\n")
+	cfg, err := Load("", local, false)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Protocol != "http" {
+		t.Errorf("Protocol = %q, want http", cfg.Protocol)
+	}
+
+	absent := t.TempDir() + "/absent.toml"
+	write(t, absent, "[api]\ntimeout_seconds = 5\n")
+	cfg, err = Load("", absent, false)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Protocol != "" {
+		t.Errorf("Protocol = %q, want empty (https default)", cfg.Protocol)
+	}
+}
+
+func TestLoadInvalidProtocol(t *testing.T) {
+	local := t.TempDir() + "/local.toml"
+	write(t, local, "[api]\nprotocol = \"ftp\"\n")
+	if _, err := Load("", local, false); err == nil {
+		t.Fatal("expected error for protocol ftp")
+	} else if !strings.Contains(err.Error(), `api.protocol: "ftp"`) {
+		t.Errorf("error %q should name key and value", err.Error())
+	}
+}

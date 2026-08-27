@@ -69,8 +69,9 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 		}
 	}
 
-	host := firstNonEmpty(ctx.GlobalFlags.Host, os.Getenv("FORGE_HOST"), cfg.Defaults.Host, rem.Host)
-	host = normalizeHost(host)
+	rawHost := firstNonEmpty(ctx.GlobalFlags.Host, os.Getenv("FORGE_HOST"), cfg.Defaults.Host, rem.Host)
+	// Resolved ctx.GlobalFlags.Host stays scheme-less, as before v0.2.0.
+	host, _ := splitScheme(rawHost)
 	owner := firstNonEmpty(ctx.GlobalFlags.Owner, os.Getenv("FORGE_OWNER"), cfg.Defaults.Owner, rem.Owner)
 	repoName := firstNonEmpty(ctx.GlobalFlags.Repo, os.Getenv("FORGE_REPO"), cfg.Defaults.Repo, rem.Repo)
 	// Commands read the resolved values back out of GlobalFlags so the whole
@@ -123,7 +124,11 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 	if ctx.Verbose {
 		logger = stderrLogger{w: ctx.Stderr}
 	}
-	ctx.API = api.NewClient("https://"+host, token, time.Duration(timeout)*time.Second, logger)
+	baseURL, warn := resolveBaseURL(rawHost, cfg.Protocol)
+	if warn {
+		fmt.Fprintf(ctx.Stderr, "warning: connecting over insecure %s\n", baseURL)
+	}
+	ctx.API = api.NewClient(baseURL, token, time.Duration(timeout)*time.Second, logger)
 
 	// Staged preflight: pinpoint which layer (host, token, owner, repo) is
 	// wrong so a 404 never surfaces as a vague "target not found".
@@ -153,15 +158,6 @@ func mapWiredErr(err error) error {
 		return &cli.Error{Code: cli.ExitRuntime, Msg: apiErr.Error()}
 	}
 	return &cli.Error{Code: cli.ExitRuntime, Msg: err.Error()}
-}
-
-// normalizeHost strips an optional scheme and trailing slash from a host
-// value, accepting both "git.example.com" and "https://git.example.com/".
-func normalizeHost(h string) string {
-	for _, p := range []string{"https://", "http://"} {
-		h = strings.TrimPrefix(h, p)
-	}
-	return strings.TrimSuffix(h, "/")
 }
 
 // firstNonEmpty returns the first non-empty string.
