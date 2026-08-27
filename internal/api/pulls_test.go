@@ -108,7 +108,7 @@ func TestGetReviewsAndComments(t *testing.T) {
 		case "/api/v1/repos/o/r/pulls/5/reviews":
 			json.NewEncoder(w).Encode([]Review{{ID: 11}, {ID: 12}})
 		case "/api/v1/repos/o/r/pulls/5/reviews/11/comments":
-			json.NewEncoder(w).Encode([]ReviewComment{{ID: 91, ReviewID: 11}})
+			w.Write([]byte(`[{"id":91,"pull_request_review_id":11,"commit_id":"sha1"}]`))
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
@@ -121,8 +121,27 @@ func TestGetReviewsAndComments(t *testing.T) {
 		t.Fatalf("reviews: %v %d", err, len(reviews))
 	}
 	rcs, err := c.GetReviewComments("o", "r", 5, 11)
-	if err != nil || len(rcs) != 1 || rcs[0].ReviewID != 11 {
+	if err != nil || len(rcs) != 1 || rcs[0].ReviewID != 11 || rcs[0].CommitID != "sha1" {
 		t.Fatalf("review comments: %v %+v", err, rcs)
+	}
+}
+
+func TestReviewCommentDecodesAnchorsAndResolution(t *testing.T) {
+	cases := []string{
+		`{"id":9,"commit_id":"abc123","original_commit_id":"def456","position":12,"original_position":8,"line":15,"tree_path":"x/y.go","resolved":true}`,
+		`{"id":9,"resolver":{"id":2,"login":"ada"}}`,
+		`{"id":9,"resolved":false}`,
+		`{"id":9}`,
+	}
+	want := []bool{true, true, false, false}
+	for i, body := range cases {
+		var rc ReviewComment
+		if err := json.Unmarshal([]byte(body), &rc); err != nil {
+			t.Fatal(err)
+		}
+		if rc.IsResolved() != want[i] {
+			t.Errorf("case %d: IsResolved=%v want %v (%+v)", i, rc.IsResolved(), want[i], rc)
+		}
 	}
 }
 
