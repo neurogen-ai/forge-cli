@@ -214,6 +214,7 @@ forge pr pull N to download the conversation.`
 func PRCommands() []cli.Command {
 	return []cli.Command{
 		prCreateCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
-		reviewListCmd{}, deprecatedPrConvCmd{},
+		reviewListCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
+		deprecatedPrConvCmd{},
 	}
 }
