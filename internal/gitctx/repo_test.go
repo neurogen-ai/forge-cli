@@ -3,6 +3,7 @@ package gitctx
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -199,6 +200,43 @@ func TestLocalBranchesContentsAndOrdering(t *testing.T) {
 		if !found[want] {
 			t.Errorf("LocalBranches missing branch %q (got %v)", want, branches)
 		}
+	}
+}
+
+// setOriginHead creates refs/remotes/origin/<branch> at HEAD and points
+// refs/remotes/origin/HEAD at it, simulating a cloned remote's default branch.
+func setOriginHead(t *testing.T, dir, branch string) {
+	t.Helper()
+	run := gitRunner(t, dir)
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	shaOut, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v: %s", err, shaOut)
+	}
+	sha := strings.TrimSpace(string(shaOut))
+	run("update-ref", "refs/remotes/origin/"+branch, sha)
+	run("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+branch)
+}
+
+func TestRemoteHeadPointsAtDefaultBranch(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "https://git.example.com/alice/proj.git")
+
+	branch := CurrentBranch(dir) // main or master depending on git
+	setOriginHead(t, dir, branch)
+
+	if got := RemoteHead(dir); got != branch {
+		t.Errorf("RemoteHead = %q, want %q", got, branch)
+	}
+}
+
+func TestRemoteHeadUnsetWhenNoRemoteRefs(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "https://git.example.com/alice/proj.git")
+
+	if got := RemoteHead(dir); got != "" {
+		t.Errorf("RemoteHead without origin/HEAD = %q, want \"\"", got)
 	}
 }
 

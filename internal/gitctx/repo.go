@@ -79,6 +79,19 @@ func LocalBranches(root string) []string {
 	return strings.Split(out, "\n")
 }
 
+// RemoteHead returns the short branch name refs/remotes/origin/HEAD points
+// at, or "" when unset (never created, shallow clone, detached ref).
+// Read-only: never runs `git remote set-head`.
+func RemoteHead(root string) string {
+	out, err := git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return ""
+	}
+	// symbolic-ref --short yields "origin/main"; strip the remote prefix.
+	_, branch, _ := strings.Cut(out, "/")
+	return branch
+}
+
 // git runs git in dir and returns trimmed stdout. A failed command whose
 // stderr mentions "not a git repository" becomes the Detect error contract;
 // other failures keep their stderr detail.
