@@ -27,11 +27,14 @@ repo  = ""
 base  = ""   # default PR base branch
 
 [savedir]
-pr-conversation = "~/forge-cache/prs"
-issue           = "~/forge-cache/issues"
+# Defaults live in ~/.local/state/forge ($XDG_STATE_HOME/forge when set).
+# Entries here are opt-ins that move them:
+# pr-conversation = "~/.local/state/forge/prs"
+# issue           = "~/.local/state/forge/issues"
 
 [api]
 timeout_seconds = 30 # seconds; 30 when absent everywhere
+protocol = "http"    # or "https"; https when absent
 ```
 
 Repo-local `<repo>/.forge/config.toml`:
@@ -54,6 +57,12 @@ global config > derived from `git remote get-url origin`. Tokens resolve as:
 
 Global flags on every command: `--host --owner --repo --token --config
 --timeout N --verbose/-v`.
+
+`--host` accepts an embedded scheme (`--host http://127.0.0.1:3000`) as a quick
+way to talk to a plain-http server, or you can set `[api] protocol`. Requests go
+over https unless one of these says otherwise. Plain http to anything other than
+localhost prints a one-line `warning: connecting over insecure http://<host>`
+to stderr.
 
 ### Help
 
@@ -117,6 +126,15 @@ forge cache flush [--yes]  # delete saved files; --yes allows dirs outside the r
 ```
 forge version
 ```
+
+## Errors and diagnosis
+
+API commands proceed naively; no wiring checks run before the request.
+When a request fails, forge runs its checks (server reachable, token valid,
+owner exists, repository exists) and appends what it found below the original
+error, after a blank line. If every layer verifies OK the output ends with
+"failed to diagnose", meaning the failure belongs to the request itself.
+Exit code always comes from the original error.
 
 ## Exit codes
 
