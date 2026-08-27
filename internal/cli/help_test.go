@@ -43,6 +43,16 @@ func TestGroupPrefixGroupsSharedFirstToken(t *testing.T) {
 	}
 }
 
+func TestSetGroupPageOverridesGroupPage(t *testing.T) {
+	reg := fakeReg()
+	reg.SetGroupPage("a", "X")
+	var buf bytes.Buffer
+	reg.PrintGroupPage(&buf, "a")
+	if got := buf.String(); got != "X\n" {
+		t.Fatalf("PrintGroupPage = %q, want %q", got, "X\n")
+	}
+}
+
 func TestHelpTextFallbackFromNameAndSummary(t *testing.T) {
 	got := HelpText(&fakeCmd{name: "b", summary: "b summary"})
 	want := "use: forge b\n\nb summary"

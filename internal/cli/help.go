@@ -61,6 +61,10 @@ func (r *Registry) GroupPrefix(name string) (prefix string, ok bool) {
 // has no entry or an empty value), one padded line per member subcommand,
 // and the per-subcommand hint line.
 func (r *Registry) PrintGroupPage(w io.Writer, prefix string) {
+	if p := r.groupPages[prefix]; p != "" {
+		fmt.Fprintln(w, p)
+		return
+	}
 	fmt.Fprintf(w, "use: forge %s <subcommand> [args]\n", prefix)
 	fmt.Fprintln(w)
 	if s := groupSummary[prefix]; s != "" {
