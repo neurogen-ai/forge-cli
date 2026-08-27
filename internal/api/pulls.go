@@ -59,6 +59,29 @@ func (c *Client) ListPullRequests(owner, repo, state string, page, limit int) ([
 	return List[PullRequest](c, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
 }
 
+// patchPull is the shared PATCH implementation for PR state fields.
+// Future PR edit fields can reuse this endpoint without duplicating
+// request construction or response decoding.
+func (c *Client) patchPull(owner, repo string, index int, fields any) (*PullRequest, error) {
+	var pr PullRequest
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, index)
+	if err := c.Do("PATCH", path, nil, fields, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+// SetPRState opens or closes one pull request. state is "open" or "closed".
+// The server response is the updated pull request.
+func (c *Client) SetPRState(owner, repo string, index int, state string) (*PullRequest, error) {
+	return c.patchPull(owner, repo, index, map[string]string{"state": state})
+}
+
+// SetPRDraft clears the draft flag and returns the updated pull request.
+func (c *Client) SetPRDraft(owner, repo string, index int) (*PullRequest, error) {
+	return c.patchPull(owner, repo, index, map[string]any{"draft": false})
+}
+
 // GetReviews lists all reviews of a pull request, following Link headers
 // until exhausted (the server caps pages around 30; a truncated tail could
 // hide a review's only unresolved comment).

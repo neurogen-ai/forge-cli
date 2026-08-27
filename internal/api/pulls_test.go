@@ -364,3 +364,85 @@ func TestAPIErrorFromServerMessage(t *testing.T) {
 		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
+
+func TestSetPRState(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(PullRequest{Number: 7, State: "closed"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	pr, err := c.SetPRState("o", "r", 7, "closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/pulls/7" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"state":"closed"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if pr.Number != 7 || pr.State != "closed" {
+		t.Errorf("pr = %+v", pr)
+	}
+
+	// Reopen sends {"state":"open"} to the same endpoint.
+	pr, err = c.SetPRState("o", "r", 7, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"state":"open"}` {
+		t.Errorf("open body = %q", gotBody)
+	}
+	if pr.State != "closed" {
+		t.Errorf("decoded State = %q", pr.State)
+	}
+}
+
+func TestSetPRDraft(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(PullRequest{Number: 9, State: "open"})
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).SetPRDraft("o", "r", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/pulls/9" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"draft":false}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if pr.Number != 9 || pr.State != "open" {
+		t.Errorf("pr = %+v", pr)
+	}
+}
+
+func TestSetPRDraftAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"draft flag is not supported"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).SetPRDraft("o", "r", 9)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "draft flag is not supported" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
