@@ -65,11 +65,15 @@ type Comment struct {
 
 // Review models a pull request review.
 type Review struct {
-	ID          int64      `json:"id"`
-	User        User       `json:"user"`
-	State       string     `json:"state"`
-	Body        string     `json:"body"`
-	Official    bool       `json:"official"`
+	ID       int64  `json:"id"`
+	User     User   `json:"user"`
+	State    string `json:"state"`
+	Body     string `json:"body"`
+	Official bool   `json:"official"`
+	// CommitID pins the review to the head sha it inspected. Stale marks a
+	// review left behind by later pushes.
+	CommitID    string     `json:"commit_id,omitempty"`
+	Stale       bool       `json:"stale,omitempty"`
 	SubmittedAt *time.Time `json:"submitted_at"`
 	CreatedAt   *time.Time `json:"created_at"`
 }
@@ -81,6 +85,32 @@ type ReviewComment struct {
 	Body      string     `json:"body"`
 	DiffHunk  string     `json:"diff_hunk"`
 	Path      string     `json:"path"`
-	ReviewID  int64      `json:"review_id,omitempty"`
 	CreatedAt *time.Time `json:"created_at"`
+
+	// Anchors. TreePath repeats Path on some servers; both decoded, callers
+	// prefer Path when non-empty.
+	TreePath         string `json:"tree_path,omitempty"`
+	Position         int64  `json:"position,omitempty"`
+	OriginalPosition int64  `json:"original_position,omitempty"`
+	Line             int64  `json:"line,omitempty"`
+	CommitID         string `json:"commit_id,omitempty"`
+	OriginalCommitID string `json:"original_commit_id,omitempty"`
+
+	// ReviewID is the owning review. Servers encode this as
+	// pull_request_review_id in list payloads.
+	ReviewID int64 `json:"pull_request_review_id,omitempty"`
+
+	// Resolution state. Resolved is present on newer servers; Resolver
+	// appears whenever a human resolved the thread. See IsResolved.
+	Resolved *bool `json:"resolved,omitempty"`
+	Resolver *User `json:"resolver,omitempty"`
+}
+
+// IsResolved reports whether this comment's thread is resolved, folding the
+// two encodings servers use into one predicate (decision D1).
+func (rc ReviewComment) IsResolved() bool {
+	if rc.Resolver != nil {
+		return true
+	}
+	return rc.Resolved != nil && *rc.Resolved
 }

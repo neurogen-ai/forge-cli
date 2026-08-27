@@ -41,22 +41,42 @@ func (c *Client) ListPullRequests(owner, repo, state string, page, limit int) ([
 	return List[PullRequest](c, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
 }
 
-// GetReviews lists reviews of a pull request.
+// GetReviews lists all reviews of a pull request, following Link headers
+// until exhausted (the server caps pages around 30; a truncated tail could
+// hide a review's only unresolved comment).
 func (c *Client) GetReviews(owner, repo string, index int) ([]Review, error) {
-	var out []Review
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, index)
-	if err := c.Do("GET", path, url.Values{}, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return List[Review](c, path, url.Values{})
 }
 
-// GetReviewComments lists the inline comments of one review.
+// GetReviewComments lists all inline comments of one review, paginated like
+// GetReviews.
 func (c *Client) GetReviewComments(owner, repo string, index, reviewID int) ([]ReviewComment, error) {
-	var out []ReviewComment
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews/%d/comments", owner, repo, index, reviewID)
-	if err := c.Do("GET", path, url.Values{}, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return List[ReviewComment](c, path, url.Values{})
+}
+
+// Thread-resolution encoding pinned by decision D2. The probe script at
+// scripts/probe-v0.3.0.sh verifies this shape against a live instance; a
+// mismatch means editing exactly this block plus TestThreadResolution.
+const threadResolutionMethod = "PATCH"
+
+// ResolveThread marks the review-comment thread rooted at commentID
+// resolved. UnresolveThread clears it. Both target ROOT comment ids; reply
+// ids yield server errors surfaced verbatim by callers. Re-resolving is
+// idempotent server-side and stays safe to retry.
+func (c *Client) ResolveThread(owner, repo string, commentID int64) error {
+	return c.setThreadResolution(owner, repo, commentID, true)
+}
+
+func (c *Client) UnresolveThread(owner, repo string, commentID int64) error {
+	return c.setThreadResolution(owner, repo, commentID, false)
+}
+
+func (c *Client) setThreadResolution(owner, repo string, commentID int64, resolved bool) error {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/comments/%d/resolve", owner, repo, commentID)
+	body := struct {
+		Resolved bool `json:"resolved"`
+	}{resolved}
+	return c.Do(threadResolutionMethod, path, nil, body, nil)
 }
