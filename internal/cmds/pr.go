@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
-	"time"
 
 	"forge/internal/api"
 	"forge/internal/cli"
@@ -14,42 +12,8 @@ import (
 	"forge/internal/table"
 )
 
-// ---- shared conversation shapes ----
-
-// flatItem is one entry of `pr conversation --format flat`. Every item carries
-// its kind; review comments keep the id of their parent review.
-type flatItem struct {
-	Kind      string     `json:"kind"` // "comment" | "review" | "review-comment"
-	ID        int64      `json:"id"`
-	User      api.User   `json:"user"`
-	Body      string     `json:"body"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	HTMLURL   string     `json:"html_url,omitempty"`
-	State     string     `json:"state,omitempty"`     // reviews only
-	Path      string     `json:"path,omitempty"`      // review comments only
-	DiffHunk  string     `json:"diff_hunk,omitempty"` // review comments only
-	ReviewID  int64      `json:"review_id,omitempty"` // review comments only
-}
-
-// groupedReview is one review with its inline comments nested.
-type groupedReview struct {
-	ID          int64      `json:"id"`
-	User        api.User   `json:"user"`
-	State       string     `json:"state"`
-	Body        string     `json:"body"`
-	SubmittedAt *time.Time `json:"submitted_at,omitempty"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	Comments    []flatItem `json:"comments"`
-}
-
-// groupedConversation is the default `pr conversation` payload.
-type groupedConversation struct {
-	Comments []api.Comment   `json:"comments"`
-	Reviews  []groupedReview `json:"reviews"`
-}
-
 // fetchConversation gathers issue-level comments, reviews, and each review's
-// inline comments. Used by pr conversation and pr pull.
+// inline comments. Used by pr conv and pr pull.
 func fetchConversation(ctx *cli.Ctx, index int) ([]api.Comment, []api.Review, map[int64][]api.ReviewComment, error) {
 	o, r := ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo
 	comments, err := ctx.API.GetIssueComments(o, r, index)
@@ -69,53 +33,6 @@ func fetchConversation(ctx *cli.Ctx, index int) ([]api.Comment, []api.Review, ma
 		perReview[rev.ID] = rcs
 	}
 	return comments, reviews, perReview, nil
-}
-
-// flattenConversation merges everything into one array sorted by created_at
-// (nil timestamps last, ties broken by kind then id).
-func flattenConversation(comments []api.Comment, reviews []api.Review, perReview map[int64][]api.ReviewComment) []flatItem {
-	items := make([]flatItem, 0, len(comments)+len(reviews)+16)
-	for _, c := range comments {
-		items = append(items, flatItem{
-			Kind: "comment", ID: c.ID, User: c.User, Body: c.Body,
-			CreatedAt: c.CreatedAt, HTMLURL: c.HTMLURL,
-		})
-	}
-	for _, rev := range reviews {
-		revAt := rev.SubmittedAt
-		if revAt == nil {
-			revAt = rev.CreatedAt
-		}
-		items = append(items, flatItem{
-			Kind: "review", ID: rev.ID, User: rev.User, Body: rev.Body,
-			CreatedAt: revAt, State: rev.State,
-		})
-		for _, rc := range perReview[rev.ID] {
-			items = append(items, flatItem{
-				Kind: "review-comment", ID: rc.ID, User: rc.User, Body: rc.Body,
-				CreatedAt: rc.CreatedAt, Path: rc.Path, DiffHunk: rc.DiffHunk,
-				ReviewID: rev.ID,
-			})
-		}
-	}
-	rank := map[string]int{"comment": 0, "review": 1, "review-comment": 2}
-	sort.SliceStable(items, func(i, j int) bool {
-		a, b := items[i], items[j]
-		switch {
-		case a.CreatedAt == nil && b.CreatedAt != nil:
-			return false
-		case a.CreatedAt != nil && b.CreatedAt == nil:
-			return true
-		case a.CreatedAt != nil && b.CreatedAt != nil &&
-			!a.CreatedAt.Equal(*b.CreatedAt):
-			return a.CreatedAt.Before(*b.CreatedAt)
-		case rank[a.Kind] != rank[b.Kind]:
-			return rank[a.Kind] < rank[b.Kind]
-		default:
-			return a.ID < b.ID
-		}
-	})
-	return items
 }
 
 // ---- pr create ----
@@ -269,75 +186,34 @@ Prints a table on an interactive terminal; JSON elsewhere. --json forces JSON,
 --table forces the table.`
 }
 
-// ---- pr conversation ----
+// ---- deprecation shim ----
 
-type prConvCmd struct{}
+// deprecatedPrConvCmd replaces the v0.2.x "pr conversation" command, which was
+// removed in v0.3.0 in favour of "pr conv". It never touches the API.
+type deprecatedPrConvCmd struct{}
 
-func (prConvCmd) Name() string { return "pr conversation" }
-func (prConvCmd) Summary() string {
-	return "print PR comments + reviews as JSON [--format flat|grouped]"
-}
-func (prConvCmd) RequiresAPI() bool { return true }
+func (deprecatedPrConvCmd) Name() string    { return "pr conversation" }
+func (deprecatedPrConvCmd) Summary() string { return "removed: use forge pr conv" }
 
-func (prConvCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr conversation")
-	if err != nil {
-		return err
+func (deprecatedPrConvCmd) Run([]string, *cli.Ctx) error {
+	return &cli.Error{
+		Code: cli.ExitUsage,
+		Msg:  "pr conversation was removed in v0.3.0",
+		Hint: "use forge pr conv N (unresolved-first view), or forge pr pull N to download",
 	}
-	format, _ := flagValue(args, "--format")
-	if format == "" {
-		format = "grouped"
-	}
-	if format != "flat" && format != "grouped" {
-		return &cli.Error{Code: cli.ExitUsage, Msg: "unknown --format " + format, Hint: "use --format flat or --format grouped (default)"}
-	}
-
-	comments, reviews, perReview, ferr := fetchConversation(ctx, n)
-	if ferr != nil {
-		return mapErr(ferr)
-	}
-
-	if format == "flat" {
-		return writeJSON(ctx.Stdout, flattenConversation(comments, reviews, perReview))
-	}
-	return writeJSON(ctx.Stdout, groupedPayload(comments, reviews, perReview))
 }
 
-func (prConvCmd) HelpPage() string {
-	return `use: forge pr conversation N [--format flat|grouped]
+func (deprecatedPrConvCmd) HelpPage() string {
+	return `use: forge pr conversation (removed)
 
-Print a PR's comments, reviews, and inline review comments as JSON.
---format grouped (default) nests review comments under their review;
---format flat merges everything into one created_at-sorted array with a
-"kind" field per item.`
+pr conversation was removed in v0.3.0. Use forge pr conv N instead, or
+forge pr pull N to download the conversation.`
 }
 
 // PRCommands returns the pr subcommands for registration in main.
 func PRCommands() []cli.Command {
 	return []cli.Command{
 		prCreateCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
+		deprecatedPrConvCmd{},
 	}
-}
-
-// groupedPayload renders the same grouped conversation shape as pr conversation.
-// (Its last save-path consumer died with save.go; conv replacement lands in
-// the v0.3.0 conv-view branch, which deletes this with the rest.)
-func groupedPayload(comments []api.Comment, reviews []api.Review, perReview map[int64][]api.ReviewComment) groupedConversation {
-	out := groupedConversation{Comments: comments, Reviews: make([]groupedReview, 0, len(reviews))}
-	for _, rev := range reviews {
-		gr := groupedReview{
-			ID: rev.ID, User: rev.User, State: rev.State, Body: rev.Body,
-			SubmittedAt: rev.SubmittedAt, CreatedAt: rev.CreatedAt,
-			Comments: make([]flatItem, 0, len(perReview[rev.ID])),
-		}
-		for _, rc := range perReview[rev.ID] {
-			gr.Comments = append(gr.Comments, flatItem{
-				Kind: "review-comment", ID: rc.ID, User: rc.User, Body: rc.Body,
-				CreatedAt: rc.CreatedAt, Path: rc.Path, DiffHunk: rc.DiffHunk,
-				ReviewID: rev.ID,
-			})
-		}
-		out.Reviews = append(out.Reviews, gr)
-	}
-	return out
 }

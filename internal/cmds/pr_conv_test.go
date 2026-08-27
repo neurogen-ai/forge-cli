@@ -1,10 +1,17 @@
 package cmds
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"forge/internal/api"
+	"forge/internal/cli"
 )
 
 // ---- helpers ----
@@ -189,5 +196,149 @@ func TestBuildConvComparatorTiesStable(t *testing.T) {
 	orderCommentsUnresolvedFirst(withResolver)
 	if withResolver[0].ID != 40 {
 		t.Fatalf("resolver thread should sort last: %v", withResolver)
+	}
+}
+
+// ---- server-level command tests ----
+
+// convTestServer serves one PR conversation: review 10 fully resolved
+// (2024-01), review 11 partial (2024-02).
+func convTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/repos/o/r/issues/7/comments":
+			fmt.Fprint(w, `[{"id":1,"user":{"login":"a"},"body":"issue comment"}]`)
+		case "/api/v1/repos/o/r/pulls/7/reviews":
+			fmt.Fprint(w, `[
+				{"id":10,"state":"COMMENTED","submitted_at":"2024-01-01T00:00:00Z","user":{"login":"r1"}},
+				{"id":11,"state":"CHANGES_REQUESTED","submitted_at":"2024-02-01T00:00:00Z","user":{"login":"r2"}}]`)
+		case "/api/v1/repos/o/r/pulls/7/reviews/10/comments":
+			fmt.Fprint(w, `[{"id":100,"path":"a.go","line":3,"resolved":true,"body":"done","user":{"login":"r1"}},
+				{"id":101,"path":"a.go","position":2,"resolved":true,"body":"also done","user":{"login":"r1"}}]`)
+		case "/api/v1/repos/o/r/pulls/7/reviews/11/comments":
+			fmt.Fprint(w, `[{"id":200,"path":"b.go","line":9,"resolved":false,"body":"fix this\nplease","user":{"login":"r2"}},
+				{"id":201,"path":"c.go","tree_path":"c.go","position":4,"resolved":true,"body":"ok","user":{"login":"r2"}}]`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+}
+
+// Default run drops the fully-resolved review, keeps the partial one with an
+// honest unresolved_count, and emits ConvPayload JSON (conv defaults to JSON
+// everywhere, including FormatDefault).
+func TestPRConvDefaultFiltersAndJSON(t *testing.T) {
+	ts := convTestServer(t)
+	defer ts.Close()
+
+	ctx := testCtx(ts)
+	if err := (prConvCmd{}).Run([]string{"7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	b := ctx.Stdout.(*bytes.Buffer).Bytes()
+	var p ConvPayload
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatalf("stdout not ConvPayload JSON: %v\n%s", err, b)
+	}
+	eqInt64(t, "default reviews", convIds(p), []int64{11})
+	if p.Reviews[0].UnresolvedCount != 1 || p.Reviews[0].TotalCount != 2 {
+		t.Fatalf("counts: unresolved=%d total=%d", p.Reviews[0].UnresolvedCount, p.Reviews[0].TotalCount)
+	}
+}
+
+// --all includes the dropped fully-resolved review; oldest-first order holds.
+func TestPRConvAllIncludesResolvedReview(t *testing.T) {
+	ts := convTestServer(t)
+	defer ts.Close()
+
+	ctx := testCtx(ts)
+	if err := (prConvCmd{}).Run([]string{"7", "--all"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	var p ConvPayload
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	eqInt64(t, "--all reviews", convIds(p), []int64{10, 11})
+}
+
+// --min-unresolved 0 matches --all for filtering purposes.
+func TestPRConvMinUnresolvedZeroEqualsAll(t *testing.T) {
+	ts := convTestServer(t)
+	defer ts.Close()
+
+	var zero, all ConvPayload
+	ctx := testCtx(ts)
+	if err := (prConvCmd{}).Run([]string{"7", "--min-unresolved", "0"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &zero); err != nil {
+		t.Fatal(err)
+	}
+	ctx = testCtx(ts)
+	if err := (prConvCmd{}).Run([]string{"7", "--all"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	eqInt64(t, "min-unresolved 0", convIds(zero), []int64{10, 11})
+	eqInt64(t, "--all", convIds(all), []int64{10, 11})
+}
+
+// forge pr conversation exits 2 with a hint pointing at pr conv.
+func TestDeprecatedPrConversationExitsUsageWithHint(t *testing.T) {
+	err := (deprecatedPrConvCmd{}).Run([]string{"42", "--format", "flat"}, testCtx(
+		httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("shim must never call the API")
+		}))))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitUsage {
+		t.Fatalf("want ExitUsage cli.Error, got %v", err)
+	}
+	if !strings.Contains(cerr.Hint, "pr conv") {
+		t.Errorf("Hint = %q, want mention of \"pr conv\"", cerr.Hint)
+	}
+}
+
+// --table forces the sectioned text render: parseable JSON by default,
+// sectioned headers under explicit table format, no ANSI escapes ever.
+func TestPRConvTableRendersSections(t *testing.T) {
+	ts := convTestServer(t)
+	defer ts.Close()
+
+	// Default on a buffer writer is still JSON.
+	ctx := testCtx(ts)
+	if err := (prConvCmd{}).Run([]string{"7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &p); err != nil {
+		t.Fatalf("default output not JSON: %v", err)
+	}
+
+	// Explicit table renders sections.
+	ctx = testCtx(ts)
+	ctx.Format = cli.FormatTable
+	if err := (prConvCmd{}).Run([]string{"7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := ctx.Stdout.(*bytes.Buffer).String()
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("section render contains ANSI escape bytes:\n%s", got)
+	}
+	for _, want := range []string{
+		"# review 11  CHANGES_REQUESTED  by r2",
+		"unresolved 1/2",
+		"b.go:9  comment 200 by r2",
+		"    fix this",
+		"    please",
+		"c.go:4  comment 201 [resolved] by r2", // position fallback for line
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section output missing %q:\n%s", want, got)
+		}
 	}
 }
