@@ -129,13 +129,13 @@ func wire(ctx *cli.Ctx, cmd cli.Command) error {
 		fmt.Fprintf(ctx.Stderr, "warning: connecting over insecure %s\n", baseURL)
 	}
 	ctx.API = api.NewClient(baseURL, token, time.Duration(timeout)*time.Second, logger)
-
-	// Staged preflight: pinpoint which layer (host, token, owner, repo) is
-	// wrong so a 404 never surfaces as a vague "target not found".
-	return diagnoseRepo(ctx.API, host, owner, repoName)
+	// Staged diagnosis no longer runs here: wire proceeds naively and the
+	// four-stage probes fire only after a command fails (v0.2.0). mapWiredErr
+	// still maps probe-time errors for that later diagnosis path.
+	return nil
 }
 
-// mapWiredErr converts errors from the wiring-time repo check into typed cli
+// mapWiredErr converts errors from probe-time diagnosis into typed cli
 // errors: transport => ExitNetwork, auth rejection => ExitAuth, otherwise
 // ExitRuntime.
 func mapWiredErr(err error) error {
