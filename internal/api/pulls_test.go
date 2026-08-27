@@ -126,6 +126,94 @@ func TestGetReviewsAndComments(t *testing.T) {
 	}
 }
 
+func TestGetReviewsFollowPagination(t *testing.T) {
+	var srv *httptest.Server
+	var visited []string
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/v1/repos/o/r/pulls/5/reviews" {
+			t.Errorf("path = %q", got)
+		}
+		visited = append(visited, r.URL.Query().Encode())
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", `<`+srv.URL+`/api/v1/repos/o/r/pulls/5/reviews?page=2>; rel="next"`)
+			reviews := make([]Review, 30)
+			for i := range reviews {
+				reviews[i].ID = int64(i + 1)
+			}
+			json.NewEncoder(w).Encode(reviews)
+			return
+		}
+		json.NewEncoder(w).Encode([]Review{{ID: 31}, {ID: 32}})
+	}))
+	defer srv.Close()
+
+	got, err := newTestClient(srv).GetReviews("o", "r", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 32 {
+		t.Fatalf("len(reviews) = %d, want 32", len(got))
+	}
+	if got[0].ID != 1 || got[29].ID != 30 || got[30].ID != 31 || got[31].ID != 32 {
+		t.Errorf("review IDs out of order across pages: first=%d last=%d", got[0].ID, got[31].ID)
+	}
+	if len(visited) != 2 {
+		t.Fatalf("visited %d pages, want 2: %v", len(visited), visited)
+	}
+	first, second := visited[0], visited[1]
+	if second != "page=2" {
+		t.Errorf("second page query = %q, want page=2", second)
+	}
+	if first != "" && first != "page=1" {
+		t.Errorf("first page query = %q, want empty or page=1", first)
+	}
+}
+
+func TestGetReviewCommentsFollowPagination(t *testing.T) {
+	var srv *httptest.Server
+	var visited []string
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/v1/repos/o/r/pulls/5/reviews/11/comments" {
+			t.Errorf("path = %q", got)
+		}
+		visited = append(visited, r.URL.Query().Encode())
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", `<`+srv.URL+`/api/v1/repos/o/r/pulls/5/reviews/11/comments?page=2>; rel="next"`)
+			json.NewEncoder(w).Encode([]ReviewComment{
+				{ID: 91, ReviewID: 11}, {ID: 92, ReviewID: 11}, {ID: 93, ReviewID: 11},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode([]ReviewComment{{ID: 94, ReviewID: 11}})
+	}))
+	defer srv.Close()
+
+	got, err := newTestClient(srv).GetReviewComments("o", "r", 5, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[3].ID != 94 {
+		t.Fatalf("comments = %+v, want 4 ending in ID 94", got)
+	}
+	for _, rc := range got {
+		if rc.ReviewID != 11 {
+			t.Errorf("comment %d has review id %d, want 11", rc.ID, rc.ReviewID)
+		}
+	}
+	if len(visited) != 2 {
+		t.Fatalf("visited %d pages, want 2: %v", len(visited), visited)
+	}
+	first, second := visited[0], visited[1]
+	if second != "page=2" {
+		t.Errorf("second page query = %q, want page=2", second)
+	}
+	if first != "" && first != "page=1" {
+		t.Errorf("first page query = %q, want empty or page=1", first)
+	}
+}
+
 func TestReviewCommentDecodesAnchorsAndResolution(t *testing.T) {
 	cases := []string{
 		`{"id":9,"commit_id":"abc123","original_commit_id":"def456","position":12,"original_position":8,"line":15,"tree_path":"x/y.go","resolved":true}`,

@@ -41,22 +41,17 @@ func (c *Client) ListPullRequests(owner, repo, state string, page, limit int) ([
 	return List[PullRequest](c, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
 }
 
-// GetReviews lists reviews of a pull request.
+// GetReviews lists all reviews of a pull request, following Link headers
+// until exhausted (the server caps pages around 30; a truncated tail could
+// hide a review's only unresolved comment).
 func (c *Client) GetReviews(owner, repo string, index int) ([]Review, error) {
-	var out []Review
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, index)
-	if err := c.Do("GET", path, url.Values{}, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return List[Review](c, path, url.Values{})
 }
 
-// GetReviewComments lists the inline comments of one review.
+// GetReviewComments lists all inline comments of one review, paginated like
+// GetReviews.
 func (c *Client) GetReviewComments(owner, repo string, index, reviewID int) ([]ReviewComment, error) {
-	var out []ReviewComment
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews/%d/comments", owner, repo, index, reviewID)
-	if err := c.Do("GET", path, url.Values{}, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return List[ReviewComment](c, path, url.Values{})
 }
