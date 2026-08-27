@@ -117,3 +117,34 @@ func TestListLabels(t *testing.T) {
 		t.Errorf("path = %q", gotPath)
 	}
 }
+
+func TestSetIssueState(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(Issue{Number: 7, State: "closed"})
+	}))
+	defer ts.Close()
+
+	iss, err := newTestClient(ts).SetIssueState("o", "r", 7, "closed")
+	if err != nil || iss.State != "closed" {
+		t.Fatalf("%v %+v", err, iss)
+	}
+	if gotMethod != "PATCH" {
+		t.Errorf("method = %q, want PATCH", gotMethod)
+	}
+	if gotPath != "/api/v1/repos/o/r/issues/7" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotBody["state"] != "closed" {
+		t.Errorf("body state = %v, want closed", gotBody["state"])
+	}
+
+	iss, err = newTestClient(ts).SetIssueState("o", "r", 7, "open")
+	if err != nil || gotBody["state"] != "open" {
+		t.Fatalf("%v %v body=%v", err, iss, gotBody["state"])
+	}
+}

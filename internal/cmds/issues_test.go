@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,5 +131,63 @@ func TestIssueCommandsHaveHelpPages(t *testing.T) {
 		if got := pageCmd.HelpPage(); !strings.HasPrefix(got, "use: forge "+c.Name()) {
 			t.Errorf("%s help page must start with its synopsis, got %q", c.Name(), got)
 		}
+	}
+}
+
+func TestIssueCloseAndOpen(t *testing.T) {
+	var gotMethod, gotPath string
+	var raw []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		raw, _ = io.ReadAll(r.Body)
+		fmt.Fprint(w, `{"number":7,"state":"closed"}`)
+	}))
+	defer ts.Close()
+
+	ctx := testCtx(ts)
+	stdout := ctx.Stdout.(*bytes.Buffer)
+
+	if err := (issueStateCmd{closing: true}).Run([]string{"7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/issues/7" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if string(raw) != `{"state":"closed"}` {
+		t.Errorf("body = %q", raw)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"state": "closed"`) {
+		t.Errorf("stdout = %q", out)
+	}
+
+	raw = nil
+	stdout.Reset()
+	if err := (issueStateCmd{}).Run([]string{"7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/issues/7" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if string(raw) != `{"state":"open"}` {
+		t.Errorf("body = %q", raw)
+	}
+	if !strings.Contains(stdout.String(), `"number": 7`) {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+}
+
+func TestIssueCloseMaps404ToRuntimeExit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprint(w, `{"message":"Not Found"}`)
+	}))
+	defer ts.Close()
+
+	err := (issueStateCmd{closing: true}).Run([]string{"99"}, testCtx(ts))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitRuntime {
+		t.Fatalf("want ExitRuntime, got %v", err)
 	}
 }

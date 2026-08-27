@@ -51,6 +51,18 @@ func (c *Client) GetIssueComments(owner, repo string, index int) ([]Comment, err
 	return out, nil
 }
 
+// SetIssueState opens or closes an issue via PATCH /repos/{o}/{r}/issues/{index}.
+// state is "open" or "closed". Returns the updated payload.
+func (c *Client) SetIssueState(owner, repo string, index int, state string) (*Issue, error) {
+	var iss Issue
+	body := map[string]string{"state": state}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, index)
+	if err := c.Do("PATCH", path, nil, body, &iss); err != nil {
+		return nil, err
+	}
+	return &iss, nil
+}
+
 // ListLabels lists repository labels (used to resolve names to IDs).
 func (c *Client) ListLabels(owner, repo string) ([]Label, error) {
 	var out []Label
