@@ -207,7 +207,7 @@ forge pr pull N to download the conversation.`
 // PRCommands returns the pr subcommands for registration in main.
 func PRCommands() []cli.Command {
 	return []cli.Command{
-		prCreateCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
+		prCreateCmd{}, createBatchCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
 		reviewListCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
 		deprecatedPrConvCmd{},
