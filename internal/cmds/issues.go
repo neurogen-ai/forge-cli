@@ -5,6 +5,7 @@ import (
 
 	"forge/internal/api"
 	"forge/internal/cli"
+	"forge/internal/table"
 )
 
 // ---- issue create ----
@@ -108,12 +109,15 @@ type issueListCmd struct{}
 func (issueListCmd) HelpPage() string {
 	return `use: forge issue list [--state open|closed|all] [--page N] [--limit M]
 
-List issues as a JSON array. Defaults: state open, page 1, no limit.`
+List issues as a JSON array. Defaults: state open, page 1, no limit.
+Prints a table on an interactive terminal; JSON elsewhere. --json forces JSON,
+--table forces the table.`
 }
 
-func (issueListCmd) Name() string      { return "issue list" }
-func (issueListCmd) Summary() string   { return "list issues as a JSON array [--state --page --limit]" }
-func (issueListCmd) RequiresAPI() bool { return true }
+func (issueListCmd) Name() string         { return "issue list" }
+func (issueListCmd) Summary() string      { return "list issues as a JSON array [--state --page --limit]" }
+func (issueListCmd) RequiresAPI() bool    { return true }
+func (issueListCmd) DefaultIsTable() bool { return true }
 
 func (issueListCmd) Run(args []string, ctx *cli.Ctx) error {
 	state, _ := flagValue(args, "--state")
@@ -123,7 +127,10 @@ func (issueListCmd) Run(args []string, ctx *cli.Ctx) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	return writeJSON(ctx.Stdout, issues)
+	if ctx.OutputIsJSON(ctx.Stdout, true) {
+		return writeJSON(ctx.Stdout, issues)
+	}
+	return table.Render(ctx.Stdout, issueListColumns, issueListRows(issues))
 }
 
 // IssueCommands returns the issue subcommands for registration in main.

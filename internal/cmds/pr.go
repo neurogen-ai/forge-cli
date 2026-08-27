@@ -11,6 +11,7 @@ import (
 	"forge/internal/api"
 	"forge/internal/cli"
 	"forge/internal/gitctx"
+	"forge/internal/table"
 )
 
 // ---- shared conversation shapes ----
@@ -243,7 +244,8 @@ func (prListCmd) Name() string { return "pr list" }
 func (prListCmd) Summary() string {
 	return "list pull requests as a JSON array [--state --page --limit]"
 }
-func (prListCmd) RequiresAPI() bool { return true }
+func (prListCmd) RequiresAPI() bool    { return true }
+func (prListCmd) DefaultIsTable() bool { return true }
 
 func (prListCmd) Run(args []string, ctx *cli.Ctx) error {
 	state, _ := flagValue(args, "--state")
@@ -253,13 +255,18 @@ func (prListCmd) Run(args []string, ctx *cli.Ctx) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	return writeJSON(ctx.Stdout, prs)
+	if ctx.OutputIsJSON(ctx.Stdout, true) {
+		return writeJSON(ctx.Stdout, prs)
+	}
+	return table.Render(ctx.Stdout, prListColumns, prListRows(prs))
 }
 
 func (prListCmd) HelpPage() string {
 	return `use: forge pr list [--state open|closed|all] [--page N] [--limit M]
 
-List pull requests as a JSON array. Defaults: state open, page 1, no limit.`
+List pull requests as a JSON array. Defaults: state open, page 1, no limit.
+Prints a table on an interactive terminal; JSON elsewhere. --json forces JSON,
+--table forces the table.`
 }
 
 // ---- pr conversation ----
