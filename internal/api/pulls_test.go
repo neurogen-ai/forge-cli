@@ -45,6 +45,66 @@ func TestCreatePullRequestPathAndBody(t *testing.T) {
 	}
 }
 
+func TestSubmitReview(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if got := r.Header.Get("Authorization"); got != "token tok" {
+			t.Errorf("Authorization = %q", got)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(Review{ID: 42, State: "APPROVED"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	// Body present: request bytes are exactly {"event":"APPROVED","body":"..."}.
+	rev, err := c.SubmitReview("o", "r", 5, SubmitReviewInput{Event: "APPROVED", Body: "looks good"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/5/reviews" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"event":"APPROVED","body":"looks good"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if rev.ID != 42 || rev.State != "APPROVED" {
+		t.Errorf("review = %+v", rev)
+	}
+
+	// Empty Body is omitted from the request bytes.
+	rev, err = c.SubmitReview("o", "r", 5, SubmitReviewInput{Event: "COMMENT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"event":"COMMENT"}` {
+		t.Errorf("empty-body request = %q", gotBody)
+	}
+	if rev.ID != 42 {
+		t.Errorf("review.ID = %d", rev.ID)
+	}
+}
+
+func TestSubmitReviewAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"event must be one of"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).SubmitReview("o", "r", 5, SubmitReviewInput{Event: "BOGUS"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "event must be one of" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
 func TestGetPullRequest(t *testing.T) {
 	var gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

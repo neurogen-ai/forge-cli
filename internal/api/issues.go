@@ -22,6 +22,20 @@ func (c *Client) CreateIssue(owner, repo string, in CreateIssueInput) (*Issue, e
 	return &iss, nil
 }
 
+// AddComment posts an issue comment. Forgejo uses the same collection for PR
+// comments because pull requests are issue-backed.
+func (c *Client) AddComment(owner, repo string, index int, body string) (*Comment, error) {
+	var com Comment
+	in := struct {
+		Body string `json:"body"`
+	}{body}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, index)
+	if err := c.Do("POST", path, nil, in, &com); err != nil {
+		return nil, err
+	}
+	return &com, nil
+}
+
 // GetIssue fetches one issue by index.
 func (c *Client) GetIssue(owner, repo string, index int) (*Issue, error) {
 	var iss Issue

@@ -24,6 +24,24 @@ func (c *Client) CreatePullRequest(owner, repo string, in CreatePRInput) (*PullR
 	return &pr, nil
 }
 
+// SubmitReviewInput is the body for POST /repos/{owner}/{repo}/pulls/{index}/reviews.
+// Event is APPROVED, REQUEST_CHANGES, or COMMENT. CLI spelling validation lives
+// in internal/cmds.
+type SubmitReviewInput struct {
+	Event string `json:"event"`
+	Body  string `json:"body,omitempty"`
+}
+
+// SubmitReview posts one pull-request review and decodes the created review.
+func (c *Client) SubmitReview(owner, repo string, index int, in SubmitReviewInput) (*Review, error) {
+	var rev Review
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, index)
+	if err := c.Do("POST", path, nil, in, &rev); err != nil {
+		return nil, err
+	}
+	return &rev, nil
+}
+
 // GetPullRequest fetches one pull request by index.
 func (c *Client) GetPullRequest(owner, repo string, index int) (*PullRequest, error) {
 	var pr PullRequest

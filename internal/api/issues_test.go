@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -31,6 +32,52 @@ func TestCreateIssueBody(t *testing.T) {
 	labels, ok := gotBody["labels"].([]any)
 	if !ok || len(labels) != 2 || labels[0] != float64(1) {
 		t.Errorf("labels = %v, want [1 2]", gotBody["labels"])
+	}
+}
+
+func TestAddComment(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if got := r.Header.Get("Authorization"); got != "token tok" {
+			t.Errorf("Authorization = %q", got)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(Comment{ID: 77, HTMLURL: "https://example.test/o/r/issues/6#issuecomment-77"})
+	}))
+	defer ts.Close()
+
+	com, err := newTestClient(ts).AddComment("o", "r", 6, "nice work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/issues/6/comments" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"body":"nice work"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if com.ID != 77 || com.HTMLURL != "https://example.test/o/r/issues/6#issuecomment-77" {
+		t.Errorf("comment = %+v", com)
+	}
+}
+
+func TestAddCommentAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"issue does not exist"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).AddComment("o", "r", 99, "x")
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 404 || apiErr.Message != "issue does not exist" {
+		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
 
