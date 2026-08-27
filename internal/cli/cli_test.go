@@ -29,6 +29,62 @@ func newTestReg(t *testing.T, cmd *captureCmd) *Registry {
 	return reg
 }
 
+// Three-word command names dispatch when the accumulated path matches a
+// registered command, even though no intermediate prefix is a command.
+func TestRunDispatchesThreeWordCommand(t *testing.T) {
+	cmd := &captureCmd{name: "x a b"}
+	reg := NewRegistry()
+	reg.Register(cmd)
+	code := Run([]string{"x", "a", "b", "arg"}, reg,
+		&Ctx{Stdout: &strings.Builder{}, Stderr: &strings.Builder{}, Prepare: nil})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d", code, ExitOK)
+	}
+	if cmd.gotCtx == nil {
+		t.Fatal("three-word command never ran")
+	}
+	if got := strings.Join(cmd.gotArgs, " "); got != "arg" {
+		t.Errorf("args = %q, want remaining argv after the command path", got)
+	}
+}
+
+// Tokens are only consumed by a registered command: an unknown three-token
+// sequence still falls through to the unknown-command error, and a trailing
+// positional that does not extend the name stays with the command's args.
+func TestRunNoFalseJoins(t *testing.T) {
+	cmd := &captureCmd{name: "x a b"}
+	reg := NewRegistry()
+	reg.Register(cmd)
+
+	var stderr strings.Builder
+	code := Run([]string{"x", "a", "zz"}, reg,
+		&Ctx{Stdout: &strings.Builder{}, Stderr: &stderr, Prepare: nil})
+	if code != ExitUsage || !strings.Contains(stderr.String(), "unknown command") {
+		t.Errorf("exit = %d, stderr = %q; want unknown-command usage error", code, stderr.String())
+	}
+
+	stderr.Reset()
+	code = Run([]string{"x", "a", "b", "b"}, reg,
+		&Ctx{Stdout: &strings.Builder{}, Stderr: &stderr, Prepare: nil})
+	if code != ExitOK || cmd.gotCtx == nil {
+		t.Fatalf("exit = %d; three-word command must still run with trailing positional", code)
+	}
+	if got := strings.Join(cmd.gotArgs, " "); got != "b" {
+		t.Errorf("args = %q, want trailing positional kept", got)
+	}
+}
+
+// Two-word dispatch is unchanged by the longest-match scan.
+func TestRunDispatchesTwoWordCommand(t *testing.T) {
+	cmd, code := runCapture(t, []string{"pr", "list", "arg"})
+	if code != ExitOK || cmd.gotCtx == nil {
+		t.Fatalf("exit = %d; two-word dispatch must keep working", code)
+	}
+	if got := strings.Join(cmd.gotArgs, " "); got != "arg" {
+		t.Errorf("args = %q, want %q", got, "arg")
+	}
+}
+
 func runCapture(t *testing.T, argv []string) (*captureCmd, int) {
 	t.Helper()
 	cmd := &captureCmd{name: "pr list"}
