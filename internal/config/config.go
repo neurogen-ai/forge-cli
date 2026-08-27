@@ -25,8 +25,11 @@ type Config struct {
 	Protocol string
 }
 
-// Default savedirs per PRD §7. Load seeds these so callers never need to
-// know the fallback values; explicit config entries overwrite them.
+// Default savedirs. Since v0.2.0 the defaults resolve to the XDG state
+// directory (see DefaultStateDir), overriding PRD §7's repo-local .forge/*
+// locations; .forge/* stays supported purely through [savedir] config
+// entries. These constants remain as fallbacks for the no-home case, so
+// callers never need to know the values either way.
 const (
 	defaultSavedirPR    = ".forge/prs"
 	defaultSavedirIssue = ".forge/issues"
@@ -41,13 +44,15 @@ const (
 // relative here; resolving them against the repo root happens later in
 // internal/cmds/cache.go.
 func Load(globalPath, localPath string, expandHome bool) (*Config, error) {
-	cfg := &Config{
-		Savedirs: map[string]string{
-			"pr-conversation": defaultSavedirPR,
-			"issue":           defaultSavedirIssue,
-		},
-		TimeoutSeconds: 30,
+	cfg := &Config{Savedirs: map[string]string{}}
+	if state := DefaultStateDir(); state != "" {
+		cfg.Savedirs["pr-conversation"] = filepath.Join(state, "prs")
+		cfg.Savedirs["issue"] = filepath.Join(state, "issues")
+	} else {
+		cfg.Savedirs["pr-conversation"] = defaultSavedirPR
+		cfg.Savedirs["issue"] = defaultSavedirIssue
 	}
+	cfg.TimeoutSeconds = 30
 	for _, path := range []string{globalPath, localPath} {
 		if path == "" {
 			continue
@@ -145,6 +150,20 @@ func DefaultGlobalPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".config", "forge", "config.toml")
+}
+
+// DefaultStateDir returns forge's state directory (savedir cache home):
+// $XDG_STATE_HOME/forge when XDG_STATE_HOME is set and non-empty, else
+// ~/.local/state/forge. Returns "" when no home directory can be determined.
+func DefaultStateDir() string {
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		return filepath.Join(xdg, "forge")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "state", "forge")
 }
 
 // LocalPath returns the repo-local config path <repoRoot>/.forge/config.toml.
