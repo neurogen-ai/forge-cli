@@ -2,6 +2,17 @@ package api
 
 import "errors"
 
+// GetRepository fetches one repository. Non-2xx surfaces through the
+// APIError contract unchanged; 404 here is a genuine "not found", unlike
+// RepoExists which disambiguates it.
+func (c *Client) GetRepository(o, r string) (*Repository, error) {
+	var repo Repository
+	if err := c.Do("GET", "/repos/"+o+"/"+r, nil, nil, &repo); err != nil {
+		return nil, err
+	}
+	return &repo, nil
+}
+
 // RepoExists reports whether GET /repos/{o}/{r} succeeds.
 //
 // exists is true only on 2xx. On 404 it returns exists=false with notFound

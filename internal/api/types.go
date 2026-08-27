@@ -114,3 +114,14 @@ func (rc ReviewComment) IsResolved() bool {
 	}
 	return rc.Resolved != nil && *rc.Resolved
 }
+
+// Repository models the slice of GET /repos/{o}/{r} forge consumes. Extend
+// with new json fields as callers need them; keep it a subset, not the
+// server's full schema.
+type Repository struct {
+	ID            int64  `json:"id"`
+	Owner         User   `json:"owner"`
+	Name          string `json:"name"`
+	FullName      string `json:"full_name"`
+	DefaultBranch string `json:"default_branch"`
+}

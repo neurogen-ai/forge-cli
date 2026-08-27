@@ -63,3 +63,44 @@ func TestRepoExistsOtherStatusesAreErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestGetRepository(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":7,"name":"r","full_name":"o/r","default_branch":"trunk","owner":{"id":3,"login":"o"}}`))
+	}))
+	defer srv.Close()
+
+	repo, err := NewClient(srv.URL, "tok", 0, nil).GetRepository("o", "r")
+	if err != nil {
+		t.Fatalf("GetRepository: %v", err)
+	}
+	if want := "/api/v1/repos/o/r"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+	if repo.ID != 7 || repo.Name != "r" || repo.FullName != "o/r" || repo.DefaultBranch != "trunk" {
+		t.Fatalf("repo = %+v", repo)
+	}
+	if repo.Owner.ID != 3 || repo.Owner.Login != "o" {
+		t.Fatalf("owner = %+v", repo.Owner)
+	}
+}
+
+func TestGetRepository404ReturnsAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer srv.Close()
+
+	repo, err := NewClient(srv.URL, "tok", 0, nil).GetRepository("o", "missing")
+	if repo != nil {
+		t.Fatalf("repo = %+v, want nil on 404", repo)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
+		t.Fatalf("err = %v, want APIError{404}", err)
+	}
+}
