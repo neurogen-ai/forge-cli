@@ -7,50 +7,59 @@ import (
 	"testing"
 )
 
-func TestSaveBasic(t *testing.T) {
+func TestWriteOverwrites(t *testing.T) {
 	dir := t.TempDir()
-	p, err := Save(dir, "repo", 7, []byte("{}"))
+
+	// First write: exactly <repo>-7.json, no timestamp/suffix variant.
+	p, err := Write(dir, "repo", 7, []byte("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(p) != "repo-7.json" {
 		t.Errorf("path = %s", p)
 	}
+
+	// Second write with the same args must replace the file in place.
+	p2, err := Write(dir, "repo", 7, []byte("{\"v\":2}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2 != p {
+		t.Errorf("rewrite path = %s, want %s", p2, p)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{\"v\":2}" {
+		t.Errorf("content = %q, want replaced content", data)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("entry count = %d (%s), want 1", len(entries), entries[0].Name())
+	}
 }
 
-func TestSaveCollisionSuffixesTimestamp(t *testing.T) {
+func TestWriteJSONPrettyPrints(t *testing.T) {
 	dir := t.TempDir()
-	orig := timeNowUnix
-	timeNowUnix = func() int64 { return 1700000000 }
-	defer func() { timeNowUnix = orig }()
-
-	p1, err := Save(dir, "repo", 7, []byte("a"))
+	p, err := WriteJSON(dir, "repo", 3, map[string]int{"a": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := Save(dir, "repo", 7, []byte("b"))
+	if filepath.Base(p) != "repo-3.json" {
+		t.Errorf("path = %s", p)
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(p2) != "repo-7-1700000000-1.json" {
-		t.Errorf("collision path = %s", p2)
+	if string(data) != "{\n  \"a\": 1\n}" {
+		t.Errorf("content = %q, want two-space indented JSON", data)
 	}
-	data, _ := os.ReadFile(p2)
-	if string(data) != "b" {
-		t.Errorf("collision overwrote original content")
-	}
-	p3, err := Save(dir, "repo", 7, []byte("c"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(p3) != "repo-7-1700000000-2.json" {
-		t.Errorf("second collision path = %s", p3)
-	}
-	data, _ = os.ReadFile(p3)
-	if string(data) != "c" {
-		t.Errorf("second collision overwrote existing content")
-	}
-	_ = p1
 }
 
 func TestResolveDirsExpandsHomeAndRoot(t *testing.T) {
@@ -134,6 +143,65 @@ func TestFlushRefusesOutsideRoot(t *testing.T) {
 	removed, err := Flush(root, "", []string{outside}, true)
 	if err != nil || len(removed) != 1 {
 		t.Fatalf("allowOutside flush = %v %v", removed, err)
+	}
+}
+
+func TestFlushRefusesConfigTomlBasename(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".forge", "prs")
+	os.MkdirAll(dir, 0o755)
+	// A dummy project-local config.toml lives beside the cache files: even
+	// inside the allowed root the flush must refuse and touch nothing.
+	cfgFile := filepath.Join(dir, "config.toml")
+	f1 := filepath.Join(dir, "r-1.json")
+	f2 := filepath.Join(dir, "r-2.json")
+	for _, p := range []string{cfgFile, f1, f2} {
+		os.WriteFile(p, []byte("{}"), 0o644)
+	}
+
+	_, err := Flush(root, "", []string{dir}, false,
+		filepath.Join(root, ".forge", "config.toml"))
+	if err == nil || !strings.Contains(err.Error(), "refusing to flush protected locations") {
+		t.Fatalf("want protected-location refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("refusal must name %s: %v", dir, err)
+	}
+	for _, p := range []string{cfgFile, f1, f2} {
+		if _, serr := os.Stat(p); serr != nil {
+			t.Errorf("refused flush must not delete %s", p)
+		}
+	}
+}
+
+func TestFlushRefusesProtectedParentEvenWithYes(t *testing.T) {
+	root := t.TempDir()
+	// Candidate savedir IS the directory of a protected absolute path;
+	// --yes semantics (allowOutside=true) must not override the refusal.
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.json")
+	os.WriteFile(victim, []byte("{}"), 0o644)
+	protectedCfg := filepath.Join(dir, "config.toml") // parent == candidate dir
+
+	// A second, perfectly legal dir must survive too: refusals are
+	// collected across all dirs before anything is removed.
+	safeDir := filepath.Join(root, ".forge", "issues")
+	os.MkdirAll(safeDir, 0o755)
+	safeFile := filepath.Join(safeDir, "r-3.json")
+	os.WriteFile(safeFile, []byte("{}"), 0o644)
+
+	_, err := Flush(root, "", []string{dir, safeDir}, true, protectedCfg)
+	if err == nil || !strings.Contains(err.Error(), "refusing to flush protected locations") {
+		t.Fatalf("want protected-location refusal under allowOutside, got %v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("refusal must name %s: %v", dir, err)
+	}
+	if _, serr := os.Stat(victim); serr != nil {
+		t.Error("protected parent's contents must not be deleted")
+	}
+	if _, serr := os.Stat(safeFile); serr != nil {
+		t.Error("atomic refusal must not delete files in other candidate dirs")
 	}
 }
 

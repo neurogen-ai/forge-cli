@@ -25,14 +25,13 @@ type Config struct {
 	Protocol string
 }
 
-// Default savedirs. Since v0.2.0 the defaults resolve to the XDG state
-// directory (see DefaultStateDir), overriding PRD §7's repo-local .forge/*
-// locations; .forge/* stays supported purely through [savedir] config
-// entries. These constants remain as fallbacks for the no-home case, so
-// callers never need to know the values either way.
+// Default savedirs, seeded unconditionally into every Config by Load. The
+// v0.3.0 pull cache lives inside the repository under .forge/cache/*; a
+// different location stays available purely through [savedir] config
+// entries (e.g. the v0.2.0 XDG state-dir layout), which win per-key.
 const (
-	defaultSavedirPR    = ".forge/prs"
-	defaultSavedirIssue = ".forge/issues"
+	defaultSavedirPR    = ".forge/cache/prs"
+	defaultSavedirIssue = ".forge/cache/issues"
 )
 
 // Load reads the global and repo-local config files and merges them,
@@ -44,14 +43,12 @@ const (
 // relative here; resolving them against the repo root happens later in
 // internal/cmds/cache.go.
 func Load(globalPath, localPath string, expandHome bool) (*Config, error) {
-	cfg := &Config{Savedirs: map[string]string{}}
-	if state := DefaultStateDir(); state != "" {
-		cfg.Savedirs["pr-conversation"] = filepath.Join(state, "prs")
-		cfg.Savedirs["issue"] = filepath.Join(state, "issues")
-	} else {
-		cfg.Savedirs["pr-conversation"] = defaultSavedirPR
-		cfg.Savedirs["issue"] = defaultSavedirIssue
-	}
+	cfg := &Config{Savedirs: map[string]string{
+		// Seed the repo-local .forge/cache defaults before merging layers,
+		// so [savedir] overrides in either file win per-key.
+		"pr-conversation": defaultSavedirPR,
+		"issue":           defaultSavedirIssue,
+	}}
 	cfg.TimeoutSeconds = 30
 	for _, path := range []string{globalPath, localPath} {
 		if path == "" {

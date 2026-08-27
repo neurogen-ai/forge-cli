@@ -17,7 +17,6 @@ type Documented interface {
 var groupSummary = map[string]string{
 	"pr":    "pull requests",
 	"issue": "issues",
-	"save":  "fetch data and write it to disk",
 	"cache": "local savedir maintenance",
 }
 
