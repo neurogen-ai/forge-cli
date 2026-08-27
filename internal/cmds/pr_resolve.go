@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 
 	"forge/internal/api"
 	"forge/internal/cli"
@@ -108,6 +110,153 @@ On success prints exactly this JSON receipt regardless of --json/--table:
 
 If the server answers 404, your Forgejo/Gitea version does not expose the
 conversation-resolution endpoint; nothing was changed.`
+}
+
+// ---- pr resolve-all ----
+
+// resolveAllCmd implements "pr resolve-all": a dry-run by default, resolving
+// every open thread of every (or one filtered) review with --yes.
+type resolveAllCmd struct{}
+
+func (resolveAllCmd) Name() string { return "pr resolve-all" }
+func (resolveAllCmd) Summary() string {
+	return "dry-run by default; with --yes resolves every open thread [--review R]"
+}
+func (resolveAllCmd) RequiresAPI() bool { return true }
+
+// ResolveAllSummary prints after a --yes run. Dry-runs print a JSON array
+// of int64 root-comment ids only, no wrapper object.
+type ResolveAllSummary struct {
+	Requested int                 `json:"requested"`
+	Resolved  int                 `json:"resolved"`
+	Skipped   int                 `json:"skipped"` // already resolved at call time; safe to rerun; stays zero unless server answers success-with-no-change observably
+	Failed    []ResolutionFailure `json:"failed,omitempty"`
+}
+
+// ResolutionFailure records one thread that the server refused, with its
+// message verbatim.
+type ResolutionFailure struct {
+	ID   int64  `json:"id"`
+	Text string `json:"text"` // server message verbatim
+}
+
+func (resolveAllCmd) Run(args []string, ctx *cli.Ctx) error {
+	n, err := parseIndex(args, "pr resolve-all")
+	if err != nil {
+		return err
+	}
+	reviewFilterStr, ok := flagValue(args, "--review")
+	var reviewFilter int64
+	if ok {
+		reviewFilter, err = strconv.ParseInt(reviewFilterStr, 10, 64)
+		if err != nil || reviewFilter <= 0 {
+			return &cli.Error{Code: cli.ExitUsage, Msg: fmt.Sprintf("pr resolve-all: %q is not a valid review id", reviewFilterStr)}
+		}
+	}
+	dryRun := !flagBool(args, "--yes")
+
+	o, r := ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo
+	reviews, err := ctx.API.GetReviews(o, r, n)
+	if err != nil {
+		return mapErr(err)
+	}
+	if ok {
+		found := false
+		for _, rev := range reviews {
+			if rev.ID == reviewFilter {
+				found = true
+				break
+			}
+		}
+		if !found {
+			ids := make([]string, 0, len(reviews))
+			for _, rev := range reviews {
+				ids = append(ids, strconv.FormatInt(rev.ID, 10))
+			}
+			return &cli.Error{
+				Code: cli.ExitUsage,
+				Msg:  fmt.Sprintf("pr resolve-all: review %d not found on PR %d", reviewFilter, n),
+				Hint: fmt.Sprintf("available reviews: %s", strings.Join(ids, ", ")),
+			}
+		}
+		reviews = []api.Review{{ID: reviewFilter}}
+	}
+
+	// Collect targets: root comments of unresolved threads, sorted ascending
+	// for deterministic runs.
+	type target struct{ commentID int64 }
+	var targets []target
+	for _, rev := range reviews {
+		rcs, err := ctx.API.GetReviewComments(o, r, n, int(rev.ID))
+		if err != nil {
+			return mapErr(err)
+		}
+		for _, rc := range rcs {
+			if !rc.IsResolved() { // review comments are thread roots in this view
+				targets = append(targets, target{commentID: rc.ID})
+			}
+		}
+	}
+	sort.SliceStable(targets, func(i, j int) bool { return targets[i].commentID < targets[j].commentID })
+
+	ids := make([]int64, len(targets))
+	for i, t := range targets {
+		ids[i] = t.commentID
+	}
+	if dryRun {
+		return writeJSON(ctx.Stdout, ids)
+	}
+
+	summary := ResolveAllSummary{Requested: len(targets)}
+	for _, t := range targets {
+		err := ctx.API.ResolveThread(o, r, t.commentID)
+		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+				// Decision D2: abort immediately on missing endpoint; reuse
+				// mapResolveErr so the version hint stays in one place.
+				return mapResolveErr(err)
+			}
+			summary.Failed = append(summary.Failed, ResolutionFailure{ID: t.commentID, Text: serverMessage(apiErr)})
+			continue
+		}
+		summary.Resolved++
+	}
+	// Print the summary FIRST so stdout stays intact even on partial failure.
+	if err := writeJSON(ctx.Stdout, summary); err != nil {
+		return err
+	}
+	if len(summary.Failed) > 0 {
+		return &cli.Error{
+			Code: cli.ExitRuntime,
+			Msg:  fmt.Sprintf("%d of %d resolutions failed", len(summary.Failed), summary.Requested),
+		}
+	}
+	return nil
+}
+
+func (resolveAllCmd) HelpPage() string {
+	return `use: forge pr resolve-all PR_INDEX [--yes] [--review REVIEW_ID]
+
+Resolve every open review-comment thread on one pull request.
+
+By default this is a DRY RUN: it prints a JSON array of the root-comment ids
+it would resolve and changes nothing. Pass --yes to actually resolve them;
+the threads are processed serially in ascending root-comment-id order and a
+JSON summary is printed:
+
+  { "requested": <int>, "resolved": <int>, "skipped": <int>, "failed": [...] }
+
+"failed" lists { "id", "text" } pairs with server messages verbatim and is
+omitted when empty. The summary prints even when some resolutions failed, so
+stdout remains parseable; the command then exits non-zero naming the count.
+
+Filter to one review's threads with --review REVIEW_ID. If that review does
+not exist on the PR, the error names the available reviews.
+
+Threads already resolved are never touched; a rerun after success is a no-op.
+If your Forgejo/Gitea version lacks the conversation-resolution endpoint the
+run aborts loudly on the first resolution attempt.`
 }
 
 func mapUnresolve(unresolve bool) string {
