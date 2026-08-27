@@ -177,6 +177,10 @@ func main() {
 	reg.Register(cmds.PullCommands()...)
 	reg.Register(cmds.CacheCommands()...)
 
+	// After all family registrations so the landing-page index includes every
+	// pr-prefixed command (e.g. "pr pull"), per the auto-index intent.
+	reg.SetGroupPage("pr", cmds.PRGroupHelpText(reg))
+
 	base := &cli.Ctx{
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
