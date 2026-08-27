@@ -1,42 +1,37 @@
-// Package store is the only filesystem-writing code in forge: the save
+// Package store is the only filesystem-writing code in forge: the Write
 // family and the cache flush/path helpers.
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
-// timeNowUnix is a variable so tests can pin the collision timestamp.
-var timeNowUnix = func() int64 { return time.Now().Unix() }
-
-// Save writes data to <dir>/<repo>-<number>.json. When that file exists, a
-// unix timestamp is inserted before the extension: <repo>-<N>-<unix-ts>.json.
-// The directory is created (0755) when missing. Returns the written path.
-func Save(dir, repo string, number int, data []byte) (string, error) {
+// Write stores data as pretty-printed JSON at <dir>/<repo>-<number>.json,
+// replacing any previous copy in place. Pulled dumps are current snapshots,
+// one file per item; there are no timestamped variants. Returns the path.
+func Write(dir, repo string, number int, data []byte) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("store: create %s: %w", dir, err)
 	}
-	base := fmt.Sprintf("%s-%d", repo, number)
-	path := filepath.Join(dir, base+".json")
-	if _, err := os.Stat(path); err == nil {
-		// Suffix until we hit a name that does not exist yet; a single
-		// suffix step could still collide and silently overwrite.
-		for i := int64(1); ; i++ {
-			path = filepath.Join(dir, fmt.Sprintf("%s-%d-%d.json", base, timeNowUnix(), i))
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				break
-			}
-		}
-	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%d.json", repo, number))
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("store: write %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// WriteJSON marshals v with two-space indent then delegates to Write.
+func WriteJSON(dir, repo string, number int, v any) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("store: encode %s-%d: %w", repo, number, err)
+	}
+	return Write(dir, repo, number, data)
 }
 
 // ResolveDirs expands ~ and makes relative savedir paths absolute against
