@@ -80,7 +80,7 @@ func TestFlushRemovesFilesNotSubdirs(t *testing.T) {
 	os.WriteFile(f1, []byte("{}"), 0o644)
 	os.WriteFile(f2, []byte("{}"), 0o644)
 
-	removed, err := Flush(root, []string{dir}, false)
+	removed, err := Flush(root, "", []string{dir}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestFlushEmptyDirRemoved(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".forge", "issues")
 	os.MkdirAll(dir, 0o755)
-	if _, err := Flush(root, []string{dir}, false); err != nil {
+	if _, err := Flush(root, "", []string{dir}, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -122,7 +122,7 @@ func TestFlushRefusesOutsideRoot(t *testing.T) {
 	f := filepath.Join(outside, "victim.json")
 	os.WriteFile(f, []byte("{}"), 0o644)
 
-	_, err := Flush(root, []string{dir, outside}, false)
+	_, err := Flush(root, "", []string{dir, outside}, false)
 	if err == nil || !strings.Contains(err.Error(), outside) {
 		t.Fatalf("want scope error naming %s, got %v", outside, err)
 	}
@@ -131,8 +131,80 @@ func TestFlushRefusesOutsideRoot(t *testing.T) {
 	}
 
 	// With allowOutside the file goes.
-	removed, err := Flush(root, []string{outside}, true)
+	removed, err := Flush(root, "", []string{outside}, true)
 	if err != nil || len(removed) != 1 {
 		t.Fatalf("allowOutside flush = %v %v", removed, err)
 	}
+}
+
+func TestFlushForgeStateCarveOut(t *testing.T) {
+	stateRoot := t.TempDir()
+	outside := t.TempDir()
+
+	t.Run("outside root but under forge state dir flushes without yes", func(t *testing.T) {
+		dir := filepath.Join(stateRoot, "forge", "prs")
+		os.MkdirAll(dir, 0o755)
+		f := filepath.Join(dir, "repo-1.json")
+		os.WriteFile(f, []byte("{}"), 0o644)
+
+		removed, err := Flush(outside, stateRoot, []string{dir}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 || removed[0] != f {
+			t.Fatalf("removed = %v, want [%s]", removed, f)
+		}
+	})
+
+	t.Run("sibling of forge state dir still refused without yes", func(t *testing.T) {
+		sibling := filepath.Join(filepath.Dir(stateRoot), "other-tool", "cache")
+		os.MkdirAll(sibling, 0o755)
+		f := filepath.Join(sibling, "victim.json")
+		os.WriteFile(f, []byte("{}"), 0o644)
+
+		_, err := Flush(outside, stateRoot, []string{sibling}, false)
+		if err == nil || !strings.Contains(err.Error(), sibling) {
+			t.Fatalf("want refusal naming %s, got %v", sibling, err)
+		}
+		if _, serr := os.Stat(f); serr != nil {
+			t.Error("refused flush must not delete anything")
+		}
+
+		// With --yes the carve-out does not matter; deletion proceeds.
+		if removed, err := Flush(outside, stateRoot, []string{sibling}, true); err != nil || len(removed) != 1 {
+			t.Fatalf("--yes flush = %v %v", removed, err)
+		}
+	})
+
+	t.Run("empty forgeStateRoot restores old strictness", func(t *testing.T) {
+		dir := filepath.Join(stateRoot, "forge", "prs")
+		os.MkdirAll(dir, 0o755)
+		f := filepath.Join(dir, "repo-1.json")
+		os.WriteFile(f, []byte("{}"), 0o644)
+
+		if _, err := Flush(outside, "", []string{dir}, false); err == nil {
+			t.Fatal("want refusal when carve-out disabled")
+		}
+		if _, err := Flush(outside, "", []string{dir}, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("root itself inside forge state dir still uses root containment once", func(t *testing.T) {
+		// Root sits inside the state root; a dir under root is flushed via
+		// root containment exactly like before — no double-count or skip.
+		root := filepath.Join(stateRoot, "workspace")
+		dir := filepath.Join(root, ".forge", "issues")
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "a.json"), []byte("{}"), 0o644)
+		os.WriteFile(filepath.Join(dir, "b.json"), []byte("{}"), 0o644)
+
+		removed, err := Flush(root, stateRoot, []string{dir}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 2 {
+			t.Fatalf("removed = %v, want both files once", removed)
+		}
+	})
 }

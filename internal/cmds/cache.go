@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"forge/internal/cli"
+	"forge/internal/config"
 	"forge/internal/store"
 )
 
@@ -44,7 +45,8 @@ func (cacheFlushCmd) HelpPage() string {
 	return `use: forge cache flush [--yes]
 
 Delete cached JSON files in every configured savedir, printing each removed
-path. Paths outside the repository root require --yes.`
+path. Paths outside the repository root require --yes. Savedirs under
+forge's state directory (~/.local/state/forge) flush without --yes.`
 }
 
 func (cacheFlushCmd) Summary() string {
@@ -60,7 +62,7 @@ func (cacheFlushCmd) Run(args []string, ctx *cli.Ctx) error {
 	home, _ := os.UserHomeDir()
 	dirs := store.ResolveDirs(ctx.Cfg.Savedirs, root, home)
 
-	removed, err := store.Flush(root, dirs, false)
+	removed, err := store.Flush(root, config.DefaultStateDir(), dirs, false)
 	if err != nil && !flagBool(args, "--yes") {
 		return &cli.Error{
 			Code: cli.ExitUsage,
@@ -69,7 +71,7 @@ func (cacheFlushCmd) Run(args []string, ctx *cli.Ctx) error {
 		}
 	}
 	if err != nil {
-		removed, err = store.Flush(root, dirs, true)
+		removed, err = store.Flush(root, config.DefaultStateDir(), dirs, true)
 		if err != nil {
 			return mapErr(err)
 		}

@@ -69,12 +69,19 @@ func sortedKeys(m map[string]string) []string {
 // never directories themselves. A directory left empty is removed too.
 // If any dir resolves outside root and allowOutside is false, nothing is
 // removed and an error listing the offending paths is returned.
-func Flush(root string, dirs []string, allowOutside bool) ([]string, error) {
+//
+// forgeStateRoot carves out forge's own managed area: when non-empty, a dir
+// outside root but under forgeStateRoot counts as safe and is deleted
+// without --yes. An empty forgeStateRoot disables the carve-out entirely.
+func Flush(root, forgeStateRoot string, dirs []string, allowOutside bool) ([]string, error) {
 	root = absPath(root)
+	if forgeStateRoot != "" {
+		forgeStateRoot = absPath(forgeStateRoot)
+	}
 	var outside []string
 	for _, dir := range dirs {
 		dir = absPath(dir)
-		if !withinRoot(root, dir) && !allowOutside {
+		if !withinRoot(root, dir) && !isUnder(forgeStateRoot, dir) && !allowOutside {
 			outside = append(outside, dir)
 		}
 	}
@@ -134,4 +141,14 @@ func withinRoot(root, path string) bool {
 		return false
 	}
 	return rel == "." || (!strings.HasPrefix(rel, "..") && rel != "")
+}
+
+// isUnder reports whether dir lies strictly inside parent (or equals it).
+// An empty parent is never considered a container: callers use "" to mean
+// "no carve-out", and the filesystem root must not match that.
+func isUnder(parent, dir string) bool {
+	if parent == "" || dir == "" {
+		return false
+	}
+	return withinRoot(parent, dir)
 }
