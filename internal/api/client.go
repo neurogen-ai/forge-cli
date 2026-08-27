@@ -64,11 +64,6 @@ func IsNetwork(err error) bool {
 // Non-2xx responses return *APIError. Transport failures return an error for
 // which IsNetwork is true.
 func (c *Client) Do(method, path string, query url.Values, body any, out any) error {
-	full := c.baseURL + "/api/v1" + path
-	if len(query) > 0 {
-		full += "?" + query.Encode()
-	}
-
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -78,13 +73,63 @@ func (c *Client) Do(method, path string, query url.Values, body any, out any) er
 		payload = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequest(method, full, payload)
+	_, _, data, err := c.send(method, path, query, payload, "application/json", "application/json")
 	if err != nil {
-		return fmt.Errorf("api: build request: %w", err)
+		return err
 	}
-	req.Header.Set("Accept", "application/json")
+
+	if out != nil && len(bytes.TrimSpace(data)) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("api: decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+// RawResponse is a successful response whose body the caller will interpret.
+type RawResponse struct {
+	Status      int
+	ContentType string
+	Body        []byte
+}
+
+// DoRaw sends one API request without JSON decoding its successful response.
+// body is sent verbatim; nil means no request body. Unlike Do it never sets
+// Accept, so text endpoints return their normal representation. Non-2xx
+// responses return *APIError; transport failures return an error for which
+// IsNetwork is true.
+func (c *Client) DoRaw(method, path string, query url.Values, body []byte) (*RawResponse, error) {
+	var payload io.Reader
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		payload = bytes.NewReader(body)
+	}
+
+	status, contentType, data, err := c.send(method, path, query, payload, "application/json", "")
+	if err != nil {
+		return nil, err
+	}
+	return &RawResponse{Status: status, ContentType: contentType, Body: data}, nil
+}
+
+// send performs one authenticated request against <baseURL>/api/v1<path> and
+// reads the whole response body. It is the single transport seam shared by Do
+// and DoRaw: absolute URL construction, request body, Authorization header,
+// verbose log line, response close, body read, and non-2xx to *APIError
+// conversion. contentType is applied only when the request has a body; an
+// empty accept or contentType means the header is omitted. send returns the
+// response status, Content-Type, and body for a 2xx response.
+func (c *Client) send(method, path string, query url.Values, body io.Reader, contentType, accept string) (int, string, []byte, error) {
+	full := c.pageURL(path, query)
+
+	req, err := http.NewRequest(method, full, body)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("api: build request: %w", err)
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	if body != nil && contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "token "+c.token)
@@ -95,7 +140,7 @@ func (c *Client) Do(method, path string, query url.Values, body any, out any) er
 	latency := time.Since(start)
 	if err != nil {
 		c.logf("%s %s -> transport error (%s)", method, full, latency.Round(time.Millisecond))
-		return &networkError{err: fmt.Errorf("api: %s %s: %w", method, path, err)}
+		return 0, "", nil, &networkError{err: fmt.Errorf("api: %s %s: %w", method, path, err)}
 	}
 	defer resp.Body.Close()
 
@@ -105,19 +150,13 @@ func (c *Client) Do(method, path string, query url.Values, body any, out any) er
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("api: read response: %w", err)
+		return 0, "", nil, fmt.Errorf("api: read response: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return apiErrorFrom(resp.StatusCode, data)
+		return 0, "", nil, apiErrorFrom(resp.StatusCode, data)
 	}
-
-	if out != nil && len(bytes.TrimSpace(data)) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("api: decode response: %w", err)
-		}
-	}
-	return nil
+	return resp.StatusCode, resp.Header.Get("Content-Type"), data, nil
 }
 
 func apiErrorFrom(status int, body []byte) *APIError {
