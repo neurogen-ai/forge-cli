@@ -49,7 +49,7 @@ type groupedConversation struct {
 }
 
 // fetchConversation gathers issue-level comments, reviews, and each review's
-// inline comments. Used by pr conversation and save pr-conversation.
+// inline comments. Used by pr conversation and pr pull.
 func fetchConversation(ctx *cli.Ctx, index int) ([]api.Comment, []api.Review, map[int64][]api.ReviewComment, error) {
 	o, r := ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo
 	comments, err := ctx.API.GetIssueComments(o, r, index)
@@ -317,4 +317,27 @@ func PRCommands() []cli.Command {
 	return []cli.Command{
 		prCreateCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
 	}
+}
+
+// groupedPayload renders the same grouped conversation shape as pr conversation.
+// (Its last save-path consumer died with save.go; conv replacement lands in
+// the v0.3.0 conv-view branch, which deletes this with the rest.)
+func groupedPayload(comments []api.Comment, reviews []api.Review, perReview map[int64][]api.ReviewComment) groupedConversation {
+	out := groupedConversation{Comments: comments, Reviews: make([]groupedReview, 0, len(reviews))}
+	for _, rev := range reviews {
+		gr := groupedReview{
+			ID: rev.ID, User: rev.User, State: rev.State, Body: rev.Body,
+			SubmittedAt: rev.SubmittedAt, CreatedAt: rev.CreatedAt,
+			Comments: make([]flatItem, 0, len(perReview[rev.ID])),
+		}
+		for _, rc := range perReview[rev.ID] {
+			gr.Comments = append(gr.Comments, flatItem{
+				Kind: "review-comment", ID: rc.ID, User: rc.User, Body: rc.Body,
+				CreatedAt: rc.CreatedAt, Path: rc.Path, DiffHunk: rc.DiffHunk,
+				ReviewID: rev.ID,
+			})
+		}
+		out.Reviews = append(out.Reviews, gr)
+	}
+	return out
 }

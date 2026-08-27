@@ -50,6 +50,32 @@ func writeJSON(w interface{ Write([]byte) (int, error) }, v any) error {
 	return enc.Encode(v)
 }
 
+// stripFlag removes all occurrences of "--name value" from args so positional
+// arguments can be parsed independently of flags.
+func stripFlag(args []string, name string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == name && i+1 < len(args) {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// resolveRoot returns the repo root; saving is only meaningful inside a repo.
+func resolveRoot(ctx *cli.Ctx) (string, error) {
+	if ctx.Repo == nil {
+		return "", &cli.Error{
+			Code: cli.ExitContext,
+			Msg:  "not inside a git repository",
+			Hint: "savedirs are resolved against the repository root",
+		}
+	}
+	return ctx.Repo.Root, nil
+}
+
 // mapErr converts api-layer errors into typed cli errors with exit codes:
 // transport failure => ExitNetwork, auth rejection (401/403) => ExitAuth,
 // other API errors => ExitRuntime.
