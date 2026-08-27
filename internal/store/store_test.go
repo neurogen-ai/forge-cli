@@ -146,6 +146,65 @@ func TestFlushRefusesOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestFlushRefusesConfigTomlBasename(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".forge", "prs")
+	os.MkdirAll(dir, 0o755)
+	// A dummy project-local config.toml lives beside the cache files: even
+	// inside the allowed root the flush must refuse and touch nothing.
+	cfgFile := filepath.Join(dir, "config.toml")
+	f1 := filepath.Join(dir, "r-1.json")
+	f2 := filepath.Join(dir, "r-2.json")
+	for _, p := range []string{cfgFile, f1, f2} {
+		os.WriteFile(p, []byte("{}"), 0o644)
+	}
+
+	_, err := Flush(root, "", []string{dir}, false,
+		filepath.Join(root, ".forge", "config.toml"))
+	if err == nil || !strings.Contains(err.Error(), "refusing to flush protected locations") {
+		t.Fatalf("want protected-location refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("refusal must name %s: %v", dir, err)
+	}
+	for _, p := range []string{cfgFile, f1, f2} {
+		if _, serr := os.Stat(p); serr != nil {
+			t.Errorf("refused flush must not delete %s", p)
+		}
+	}
+}
+
+func TestFlushRefusesProtectedParentEvenWithYes(t *testing.T) {
+	root := t.TempDir()
+	// Candidate savedir IS the directory of a protected absolute path;
+	// --yes semantics (allowOutside=true) must not override the refusal.
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.json")
+	os.WriteFile(victim, []byte("{}"), 0o644)
+	protectedCfg := filepath.Join(dir, "config.toml") // parent == candidate dir
+
+	// A second, perfectly legal dir must survive too: refusals are
+	// collected across all dirs before anything is removed.
+	safeDir := filepath.Join(root, ".forge", "issues")
+	os.MkdirAll(safeDir, 0o755)
+	safeFile := filepath.Join(safeDir, "r-3.json")
+	os.WriteFile(safeFile, []byte("{}"), 0o644)
+
+	_, err := Flush(root, "", []string{dir, safeDir}, true, protectedCfg)
+	if err == nil || !strings.Contains(err.Error(), "refusing to flush protected locations") {
+		t.Fatalf("want protected-location refusal under allowOutside, got %v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("refusal must name %s: %v", dir, err)
+	}
+	if _, serr := os.Stat(victim); serr != nil {
+		t.Error("protected parent's contents must not be deleted")
+	}
+	if _, serr := os.Stat(safeFile); serr != nil {
+		t.Error("atomic refusal must not delete files in other candidate dirs")
+	}
+}
+
 func TestFlushForgeStateCarveOut(t *testing.T) {
 	stateRoot := t.TempDir()
 	outside := t.TempDir()

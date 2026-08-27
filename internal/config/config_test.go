@@ -75,8 +75,8 @@ func TestLoadMissingFiles(t *testing.T) {
 		t.Errorf("Defaults not zero: %+v", cfg.Defaults)
 	}
 	for key, want := range map[string]string{
-		"pr-conversation": filepath.Join(DefaultStateDir(), "prs"),
-		"issue":           filepath.Join(DefaultStateDir(), "issues"),
+		"pr-conversation": ".forge/cache/prs",
+		"issue":           ".forge/cache/issues",
 	} {
 		if got := cfg.Savedirs[key]; got != want {
 			t.Errorf("Savedirs[%q] = %q, want default %q", key, got, want)
@@ -96,24 +96,24 @@ func TestDefaultStateDir(t *testing.T) {
 	}
 }
 
-func TestLoadSavedirDefaultsUseStateDir(t *testing.T) {
+func TestLoadSavedirDefaultsSeeded(t *testing.T) {
 	tmp := t.TempDir()
+	// The state directory must not influence the seeded defaults anymore;
+	// a savedir there only happens through explicit [savedir] entries.
 	t.Setenv("XDG_STATE_HOME", tmp)
 	cfg, err := Load("/nonexistent/g.toml", "/nonexistent/l.toml", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := cfg.Savedirs["pr-conversation"], filepath.Join(tmp, "forge", "prs"); got != want {
+	if got, want := cfg.Savedirs["pr-conversation"], ".forge/cache/prs"; got != want {
 		t.Errorf("Savedirs[pr-conversation] = %q, want %q", got, want)
 	}
-	if got, want := cfg.Savedirs["issue"], filepath.Join(tmp, "forge", "issues"); got != want {
+	if got, want := cfg.Savedirs["issue"], ".forge/cache/issues"; got != want {
 		t.Errorf("Savedirs[issue] = %q, want %q", got, want)
 	}
 }
 
-func TestLoadUserSavedirOverridesStateDirDefault(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", tmp)
+func TestLoadUserSavedirOverridesSeededDefault(t *testing.T) {
 	local := t.TempDir() + "/local.toml"
 	write(t, local, "[savedir]\npr-conversation = \".forge/prs\"\n")
 	cfg, err := Load("", local, false)
@@ -123,8 +123,8 @@ func TestLoadUserSavedirOverridesStateDirDefault(t *testing.T) {
 	if got, want := cfg.Savedirs["pr-conversation"], ".forge/prs"; got != want {
 		t.Errorf("Savedirs[pr-conversation] = %q, want user override %q", got, want)
 	}
-	// Non-overridden keys keep the state-dir default.
-	if got, want := cfg.Savedirs["issue"], filepath.Join(tmp, "forge", "issues"); got != want {
+	// Non-overridden keys keep the seeded default.
+	if got, want := cfg.Savedirs["issue"], ".forge/cache/issues"; got != want {
 		t.Errorf("Savedirs[issue] = %q, want default %q", got, want)
 	}
 }

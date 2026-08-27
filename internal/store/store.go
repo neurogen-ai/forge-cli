@@ -68,7 +68,15 @@ func sortedKeys(m map[string]string) []string {
 // forgeStateRoot carves out forge's own managed area: when non-empty, a dir
 // outside root but under forgeStateRoot counts as safe and is deleted
 // without --yes. An empty forgeStateRoot disables the carve-out entirely.
-func Flush(root, forgeStateRoot string, dirs []string, allowOutside bool) ([]string, error) {
+//
+// protectedFiles names configuration files Flush must never endanger,
+// regardless of allowOutside: a candidate dir is refused when it contains
+// a regular file named "config.toml", or when it equals the directory of
+// any protectedFile after absolute-path resolution — e.g. an XDG-style
+// savedir next to ~/.config/forge/config.toml or the repo-local
+// .forge/config.toml sibling of the pr cache. All refusals are collected
+// across every dir first; the whole flush then aborts with nothing touched.
+func Flush(root, forgeStateRoot string, dirs []string, allowOutside bool, protectedFiles ...string) ([]string, error) {
 	root = absPath(root)
 	if forgeStateRoot != "" {
 		forgeStateRoot = absPath(forgeStateRoot)
@@ -83,6 +91,33 @@ func Flush(root, forgeStateRoot string, dirs []string, allowOutside bool) ([]str
 	if len(outside) > 0 {
 		return nil, fmt.Errorf("refusing to flush outside %s: %s",
 			root, strings.Join(outside, ", "))
+	}
+
+	var refused []string
+	protectedBasename := "config.toml"
+	for _, dir := range dirs {
+		dir = absPath(dir)
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && e.Type().IsRegular() && e.Name() == protectedBasename {
+					refused = append(refused, dir)
+					break
+				}
+			}
+		}
+		// Missing/unreadable dirs skip only the basename scan; the parent
+		// match still applies.
+		for _, p := range protectedFiles {
+			if filepath.Dir(absPath(p)) == dir {
+				refused = append(refused, dir)
+				break
+			}
+		}
+	}
+	if len(refused) > 0 {
+		return nil, fmt.Errorf("refusing to flush protected locations: %s",
+			strings.Join(refused, ", "))
 	}
 
 	var removed []string
