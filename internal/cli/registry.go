@@ -76,11 +76,26 @@ type GlobalFlags struct {
 
 // Registry maps full dotted command paths ("pr conversation") to commands.
 type Registry struct {
-	cmds map[string]Command
+	cmds       map[string]Command
+	groupPages map[string]string
 }
 
 func NewRegistry() *Registry {
-	return &Registry{cmds: make(map[string]Command)}
+	return &Registry{cmds: make(map[string]Command), groupPages: make(map[string]string)}
+}
+
+// SetGroupPage replaces the generated family page for prefix. Empty text
+// falls back to the generated page. Registered by families whose landing
+// surface is a single command (pr → conv).
+func (r *Registry) SetGroupPage(prefix, text string) {
+	if r.groupPages == nil {
+		r.groupPages = make(map[string]string)
+	}
+	if text == "" {
+		delete(r.groupPages, prefix)
+		return
+	}
+	r.groupPages[prefix] = text
 }
 
 // Register panics on duplicate Name().

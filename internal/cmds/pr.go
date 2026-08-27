@@ -4,11 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 
 	"forge/internal/api"
 	"forge/internal/cli"
-	"forge/internal/gitctx"
 	"forge/internal/table"
 )
 
@@ -40,40 +38,34 @@ func fetchConversation(ctx *cli.Ctx, index int) ([]api.Comment, []api.Review, ma
 type prCreateCmd struct{}
 
 func (prCreateCmd) Name() string      { return "pr create" }
-func (prCreateCmd) Summary() string   { return "open a pull request (--title required)" }
+func (prCreateCmd) Summary() string   { return "open a pull request (auto-titled from branch tip)" }
 func (prCreateCmd) RequiresAPI() bool { return true }
 
 func (prCreateCmd) Run(args []string, ctx *cli.Ctx) error {
-	title, ok := flagValue(args, "--title")
-	if !ok || title == "" {
-		return &cli.Error{Code: cli.ExitUsage, Msg: "pr create requires --title"}
-	}
+	title, _ := flagValue(args, "--title")
 	head, _ := flagValue(args, "--head")
-	if head == "" {
-		head = os.Getenv("FORGE_HEAD")
-	}
-	if head == "" && ctx.Repo != nil {
-		head = gitctx.CurrentBranch(ctx.Repo.Root)
-	}
-	if head == "" {
-		return &cli.Error{Code: cli.ExitUsage, Msg: "cannot determine head branch", Hint: "pass --head or run inside a repository on a branch"}
-	}
 	base, _ := flagValue(args, "--base")
-	if base == "" {
-		base = os.Getenv("FORGE_BASE")
+	cfgBase := ""
+	if ctx.Cfg != nil {
+		cfgBase = ctx.Cfg.Defaults.Base
 	}
-	if base == "" && ctx.Cfg != nil {
-		base = ctx.Cfg.Defaults.Base
+	apiBase := func() (string, error) {
+		repo, err := ctx.API.GetRepository(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo)
+		if err != nil {
+			return "", err
+		}
+		return repo.DefaultBranch, nil
 	}
-	if base == "" {
-		return &cli.Error{Code: cli.ExitRuntime, Msg: "no base branch", Hint: "cannot determine base branch; pass --base"}
+	d, err := ResolveCreateDefaults(title, head, base, ctx.Repo, cfgBase, apiBase)
+	if err != nil {
+		return err
 	}
 	body, _ := flagValue(args, "--body")
 
 	pr, err := ctx.API.CreatePullRequest(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo,
-		api.CreatePRInput{Title: title, Head: head, Base: base, Body: body})
+		api.CreatePRInput{Title: d.Title, Head: d.Head, Base: d.Base, Body: body})
 	if err != nil {
-		return mapCreateErr(ctx, ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, head, base, err)
+		return mapCreateErr(ctx, ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, d.Head, d.Base, err)
 	}
 	return writeJSON(ctx.Stdout, pr)
 }
@@ -120,10 +112,12 @@ func mapCreateErr(ctx *cli.Ctx, owner, repo, head, base string, err error) error
 // ---- pr get ----
 
 func (prCreateCmd) HelpPage() string {
-	return `use: forge pr create --title T [--head B] [--base B] [--body TEXT]
+	return `use: forge pr create [--title T] [--head B] [--base B] [--body TEXT]
 
 Open a pull request. Head defaults to $FORGE_HEAD, then your current git
-branch. Base defaults to $FORGE_BASE, then [defaults] base in config.
+branch. Title defaults to the branch tip commit subject when omitted.
+Base defaults to --base, then $FORGE_BASE, then [defaults].base in
+config, then origin/HEAD, then the server default_branch.
 
 A 404 here is diagnosed: missing base branch, missing head branch, or pull
 requests disabled for the repo.`
@@ -213,7 +207,7 @@ forge pr pull N to download the conversation.`
 // PRCommands returns the pr subcommands for registration in main.
 func PRCommands() []cli.Command {
 	return []cli.Command{
-		prCreateCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
+		prCreateCmd{}, createBatchCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
 		reviewListCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
 		deprecatedPrConvCmd{},
