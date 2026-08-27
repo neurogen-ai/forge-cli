@@ -3,6 +3,7 @@ package gitctx
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +99,159 @@ func TestCurrentBranch(t *testing.T) {
 func TestCurrentBranchOutsideRepoIsEmpty(t *testing.T) {
 	if got := CurrentBranch(t.TempDir()); got != "" {
 		t.Errorf("CurrentBranch outside repo = %q, want \"\"", got)
+	}
+}
+
+func TestCommitSubject(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("checkout", "-b", "topic")
+	if err := os.WriteFile(dir+"/file.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "feat: add file\n\nbody line")
+
+	if got := CommitSubject(dir, "topic"); got != "feat: add file" {
+		t.Errorf("CommitSubject = %q, want %q", got, "feat: add file")
+	}
+}
+
+func TestCommitSubjectMissingRefIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if got := CommitSubject(dir, "no-such-ref"); got != "" {
+		t.Errorf("CommitSubject of missing ref = %q, want \"\"", got)
+	}
+}
+
+func TestUniqueCommitCount(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	base := CurrentBranch(dir) // default branch, main or master depending on git
+
+	run("checkout", "-b", "feature")
+
+	commit := func(msg string) {
+		t.Helper()
+		if err := os.WriteFile(dir+"/f.txt", []byte(msg+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", ".")
+		run("commit", "-m", msg)
+	}
+
+	commit("first unique commit")
+	n, err := UniqueCommitCount(dir, base, "feature")
+	if err != nil {
+		t.Fatalf("UniqueCommitCount: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("after one commit: count = %d, want 1", n)
+	}
+
+	commit("second unique commit")
+	n, err = UniqueCommitCount(dir, base, "feature")
+	if err != nil {
+		t.Fatalf("UniqueCommitCount second pass: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("after two commits: count = %d, want 2", n)
+	}
+}
+
+func TestUniqueCommitCountMissingBaseErrors(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if _, err := UniqueCommitCount(dir, "no-such-base", "HEAD"); err == nil {
+		t.Error("UniqueCommitCount with missing base: want error, got nil")
+	}
+}
+
+func TestLocalBranchesContentsAndOrdering(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("branch", "alpha")
+	run("branch", "beta")
+
+	branches := LocalBranches(dir)
+	if len(branches) != 3 {
+		t.Fatalf("LocalBranches = %v, want 3 branches", branches)
+	}
+	for i := 1; i < len(branches); i++ {
+		if branches[i-1] >= branches[i] {
+			t.Errorf("LocalBranches not sorted: %v", branches)
+		}
+	}
+	found := map[string]bool{}
+	for _, b := range branches {
+		found[b] = true
+	}
+	base := CurrentBranch(dir)
+	for _, want := range []string{base, "alpha", "beta"} {
+		if !found[want] {
+			t.Errorf("LocalBranches missing branch %q (got %v)", want, branches)
+		}
+	}
+}
+
+// setOriginHead creates refs/remotes/origin/<branch> at HEAD and points
+// refs/remotes/origin/HEAD at it, simulating a cloned remote's default branch.
+func setOriginHead(t *testing.T, dir, branch string) {
+	t.Helper()
+	run := gitRunner(t, dir)
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	shaOut, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v: %s", err, shaOut)
+	}
+	sha := strings.TrimSpace(string(shaOut))
+	run("update-ref", "refs/remotes/origin/"+branch, sha)
+	run("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+branch)
+}
+
+func TestRemoteHeadPointsAtDefaultBranch(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "https://git.example.com/alice/proj.git")
+
+	branch := CurrentBranch(dir) // main or master depending on git
+	setOriginHead(t, dir, branch)
+
+	if got := RemoteHead(dir); got != branch {
+		t.Errorf("RemoteHead = %q, want %q", got, branch)
+	}
+}
+
+func TestRemoteHeadUnsetWhenNoRemoteRefs(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "https://git.example.com/alice/proj.git")
+
+	if got := RemoteHead(dir); got != "" {
+		t.Errorf("RemoteHead without origin/HEAD = %q, want \"\"", got)
+	}
+}
+
+// gitRunner returns a run helper that fails the test when a git command in
+// dir errors.
+func gitRunner(t *testing.T, dir string) func(args ...string) {
+	t.Helper()
+	requireGit(t)
+	return func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 }
 
