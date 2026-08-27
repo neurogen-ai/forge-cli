@@ -97,11 +97,28 @@ forge pr create --title "T" [--head B] [--base B] [--body TEXT]
 forge pr get N
 forge pr list [--state open|closed|all] [--page N] [--limit M]
 forge pr conv N [--all] [--min-unresolved N]
+forge pr create-batch PATTERN [--base B] [--body TEXT] [--yes]
 ```
 
 `pr create` defaults `--head` to the current branch and `--base` to the
 configured base. If no base can be determined it fails asking for `--base`.
-Output is JSON on stdout.
+With no `--title`, `pr create` infers it from the branch tip's commit
+subject, which needs at least one commit unique to the head branch vs the
+base. With no `--base` the base comes from `$FORGE_BASE`, then the
+`[defaults].base` config, then `origin/HEAD`, then the server's default
+branch. There is no hardcoded `main`. Output is JSON on stdout.
+
+`forge pr` with no args, or `-h`, opens the `pr conv` page plus an index of
+the other pr verbs.
+
+`pr create-batch PATTERN` opens PRs for local branches matching the glob.
+It is dry-run by default and prints a JSON plan; `--yes` posts. On the first
+failed POST it stops and prints the partial receipt.
+
+```
+forge pr create-batch 'v0.4.0*'        # plan, posts nothing
+forge pr create-batch 'v0.4.0*' --yes  # posts, stops on first failure
+```
 
 A 404 at create time is diagnosed: the command checks whether the base and
 head branches exist and reports which one is missing, or says the repo does
