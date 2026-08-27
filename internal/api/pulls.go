@@ -55,3 +55,28 @@ func (c *Client) GetReviewComments(owner, repo string, index, reviewID int) ([]R
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews/%d/comments", owner, repo, index, reviewID)
 	return List[ReviewComment](c, path, url.Values{})
 }
+
+// Thread-resolution encoding pinned by decision D2. The probe script at
+// scripts/probe-v0.3.0.sh verifies this shape against a live instance; a
+// mismatch means editing exactly this block plus TestThreadResolution.
+const threadResolutionMethod = "PATCH"
+
+// ResolveThread marks the review-comment thread rooted at commentID
+// resolved. UnresolveThread clears it. Both target ROOT comment ids; reply
+// ids yield server errors surfaced verbatim by callers. Re-resolving is
+// idempotent server-side and stays safe to retry.
+func (c *Client) ResolveThread(owner, repo string, commentID int64) error {
+	return c.setThreadResolution(owner, repo, commentID, true)
+}
+
+func (c *Client) UnresolveThread(owner, repo string, commentID int64) error {
+	return c.setThreadResolution(owner, repo, commentID, false)
+}
+
+func (c *Client) setThreadResolution(owner, repo string, commentID int64, resolved bool) error {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/comments/%d/resolve", owner, repo, commentID)
+	body := struct {
+		Resolved bool `json:"resolved"`
+	}{resolved}
+	return c.Do(threadResolutionMethod, path, nil, body, nil)
+}

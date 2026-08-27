@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -230,6 +231,60 @@ func TestReviewCommentDecodesAnchorsAndResolution(t *testing.T) {
 		if rc.IsResolved() != want[i] {
 			t.Errorf("case %d: IsResolved=%v want %v (%+v)", i, rc.IsResolved(), want[i], rc)
 		}
+	}
+}
+
+func TestThreadResolution(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	nextStatus := 200
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if got := r.Header.Get("Authorization"); got != "token tok" {
+			t.Errorf("Authorization = %q", got)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(nextStatus)
+		if nextStatus != 200 {
+			w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	// Resolve: PATCH with body exactly {"resolved":true}, 2xx -> nil error.
+	nextStatus = 200
+	if err := c.ResolveThread("o", "r", 88); err != nil {
+		t.Fatalf("ResolveThread: %v", err)
+	}
+	if gotMethod != threadResolutionMethod || gotPath != "/api/v1/repos/o/r/pulls/comments/88/resolve" {
+		t.Errorf("resolve got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"resolved":true}` {
+		t.Errorf("resolve body = %q", gotBody)
+	}
+
+	// Unresolve: same endpoint, body exactly {"resolved":false}.
+	nextStatus = 200
+	if err := c.UnresolveThread("o", "r", 88); err != nil {
+		t.Fatalf("UnresolveThread: %v", err)
+	}
+	if gotMethod != threadResolutionMethod || gotPath != "/api/v1/repos/o/r/pulls/comments/88/resolve" {
+		t.Errorf("unresolve got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"resolved":false}` {
+		t.Errorf("unresolve body = %q", gotBody)
+	}
+
+	// Error path: non-2xx surfaces as *APIError with status and server message.
+	nextStatus = 404
+	err := c.ResolveThread("o", "r", 99)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 404 || apiErr.Message != "Not Found" {
+		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
 
