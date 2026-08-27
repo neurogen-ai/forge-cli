@@ -187,6 +187,9 @@ written:
 {"path": ".forge/cache/prs/ngenesis/ngen-weave-42.json", "items": 12, "reviews": 3, "unresolved": 5}
 ```
 
+Cache dumps are throwaway local snapshots — add `.forge/cache/` to your
+repository's `.gitignore` (`.forge/config.toml` itself stays committable).
+
 The same config keys control location as before (`[savedir]
 pr-conversation` / `issue`); they now seed defaults rooted at `.forge/cache`.
 
