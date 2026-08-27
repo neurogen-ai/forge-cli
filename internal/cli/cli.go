@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ func (e *Error) Error() string {
 // Usage prints top-level help: one line per registered command family (or
 // standalone command) plus the global flags, pointing each family at -h.
 func Usage(w io.Writer, reg *Registry) {
-	fmt.Fprintln(w, "usage: forge [--host H] [--owner O] [--repo R] [--token T] [--config P] [--timeout S] [-v] <command> [args]")
+	fmt.Fprintln(w, "usage: forge [--host H] [--owner O] [--repo R] [--token T] [--config P] [--timeout S] [--json|--table] [-v] <command> [args]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
 	seen := map[string]bool{}
@@ -76,6 +77,14 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		switch {
 		case arg == "-v":
 			ctx.Verbose = true
+			i++
+			continue
+		case arg == "--json":
+			ctx.GlobalFlags.JSON = true
+			i++
+			continue
+		case arg == "--table" || arg == "-t":
+			ctx.GlobalFlags.Table = true
 			i++
 			continue
 		case arg == "-h" || arg == "--help":
@@ -154,6 +163,7 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 			consumed = 2
 		}
 	}
+
 	// -h/--help anywhere after the command path wins and swallows everything
 	// after it; following flags are ignored entirely and Prepare never runs.
 	wantsHelp := ctx.Help
@@ -194,6 +204,27 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 		fmt.Fprintln(ctx.Stderr)
 		PrintHelp(ctx.Stderr, cmd)
 		return ExitUsage
+	}
+
+	// Resolve the data-output format before anything executes, so misuse is
+	// rejected upfront and commands can rely on ctx.Format.
+	switch {
+	case ctx.GlobalFlags.JSON && ctx.GlobalFlags.Table:
+		fmt.Fprintln(ctx.Stderr, "forge: use either --json or --table, not both")
+		fmt.Fprintln(ctx.Stderr)
+		PrintHelp(ctx.Stderr, cmd)
+		return ExitUsage
+	case ctx.GlobalFlags.Table && !DeclaresTable(cmd):
+		fmt.Fprintf(ctx.Stderr, "forge: %s emits JSON only\n", cmd.Name())
+		fmt.Fprintln(ctx.Stderr)
+		PrintHelp(ctx.Stderr, cmd)
+		return ExitUsage
+	case ctx.GlobalFlags.JSON:
+		ctx.Format = FormatJSON
+	case ctx.GlobalFlags.Table:
+		ctx.Format = FormatTable
+	default:
+		ctx.Format = FormatDefault
 	}
 
 	if base.Prepare != nil {
@@ -258,6 +289,14 @@ func applyGlobalArgs(args []string, ctx *Ctx) ([]string, error) {
 			ctx.Verbose = true
 			continue
 		}
+		if arg == "--json" {
+			ctx.GlobalFlags.JSON = true
+			continue
+		}
+		if arg == "--table" || arg == "-t" {
+			ctx.GlobalFlags.Table = true
+			continue
+		}
 		ptr, known := valFlag(arg)
 		if !known || !strings.HasPrefix(arg, "--") {
 			out = append(out, arg)
@@ -279,6 +318,40 @@ func applyGlobalArgs(args []string, ctx *Ctx) ([]string, error) {
 		*ptr = val
 	}
 	return out, nil
+}
+
+// OutputIsJSON decides whether the command prints JSON instead of a table.
+// Explicit flags win over every default; absent flags downgrade a table
+// command to JSON whenever stdout is piped or redirected (unix convention),
+// and leave JSON-only commands untouched.
+func (c *Ctx) OutputIsJSON(w io.Writer, defaultIsTable bool) bool {
+	return outputIsJSON(c.Format, defaultIsTable, isTerminal(w))
+}
+
+// outputIsJSON is the pure decision core of OutputIsJSON; the writer/TTY probe
+// is injected so tests can pin behavior without stubbing writers.
+func outputIsJSON(f Format, defaultIsTable bool, tty bool) bool {
+	if f == FormatJSON {
+		return true
+	}
+	if f == FormatTable {
+		return false
+	}
+	return !(defaultIsTable && tty)
+}
+
+// isTerminal reports whether w is an interactive character device. Non-file
+// writers (test buffers) are never terminals. stdlib-only: no x/sys dep.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return st.Mode()&os.ModeCharDevice != 0
 }
 
 // reportError prints err and returns its mapped exit code.

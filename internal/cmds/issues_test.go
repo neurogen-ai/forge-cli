@@ -79,6 +79,47 @@ func TestIssueListSendsTypeIssues(t *testing.T) {
 	}
 }
 
+func TestIssueListPipedStillJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"number":1},{"number":2}]`)
+	}))
+	defer ts.Close()
+
+	ctx := testCtx(ts)
+	if err := (issueListCmd{}).Run([]string{}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, ctx.Stdout.(*bytes.Buffer).String())
+	}
+	if len(out) != 2 {
+		t.Errorf("len = %d", len(out))
+	}
+
+	// Same server, forced table format: padded header row plus separator.
+	ctx = testCtx(ts)
+	ctx.Format = cli.FormatTable
+	if err := (issueListCmd{}).Run([]string{}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.HasPrefix(got, "NUMBER") {
+		t.Errorf("table output must start with NUMBER header, got %q", got)
+	}
+	lines := strings.Split(got, "\n")
+	hasSep := false
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(l, "---") {
+			hasSep = true
+			break
+		}
+	}
+	if !hasSep {
+		t.Errorf("table output must contain a dashed separator line, got %q", got)
+	}
+}
+
 func TestIssueCommandsHaveHelpPages(t *testing.T) {
 	for _, c := range IssueCommands() {
 		pageCmd, ok := c.(interface{ HelpPage() string })

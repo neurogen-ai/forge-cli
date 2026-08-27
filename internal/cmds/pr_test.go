@@ -59,7 +59,7 @@ func TestPRCreateRequiresTitle(t *testing.T) {
 	}
 }
 
-func TestPRListOutputIsJSONArray(t *testing.T) {
+func TestPRListPipedStillJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[{"number":1},{"number":2}]`)
 	}))
@@ -75,6 +75,28 @@ func TestPRListOutputIsJSONArray(t *testing.T) {
 	}
 	if len(out) != 2 {
 		t.Errorf("len = %d", len(out))
+	}
+
+	// Same server, forced table format: padded header row plus separator.
+	ctx = testCtx(ts)
+	ctx.Format = cli.FormatTable
+	if err := (prListCmd{}).Run([]string{}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.HasPrefix(got, "NUMBER") {
+		t.Errorf("table output must start with NUMBER header, got %q", got)
+	}
+	lines := strings.Split(got, "\n")
+	hasSep := false
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(l, "---") {
+			hasSep = true
+			break
+		}
+	}
+	if !hasSep {
+		t.Errorf("table output must contain a dashed separator line, got %q", got)
 	}
 }
 
