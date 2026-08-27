@@ -1,10 +1,12 @@
 package cmds
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"sort"
 
+	"forge/internal/api"
 	"forge/internal/cli"
 	"forge/internal/gitctx"
 )
@@ -39,14 +41,14 @@ command prints a dry-run plan as JSON (branch, title, base per item).
 Branches whose tip commit has no subject are skipped with a note on
 stderr. --base follows the same precedence as pr create; each head is
 the matching branch itself. --yes posts one pull request per planned
-branch.`
+branch (with --body TEXT verbatim) and stops at the first failed pull
+request: the partial receipt is printed, then the command exits non-zero.`
 }
 
 func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
-	yes := flagBool(args, "--yes") // parsed here; --yes posting lands in the next step
+	yes := flagBool(args, "--yes")
 	baseFlag, _ := flagValue(args, "--base")
-	_, _ = flagValue(args, "--body") // body is reserved for the --yes step
-	_ = yes
+	bodyFlag, _ := flagValue(args, "--body")
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -137,6 +139,32 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 			Msg:  "no commits to title any matching branch",
 			Hint: "commit on the matching branches first, or adjust PATTERN",
 		}
+	}
+	if !yes {
+		return writeJSON(ctx.Stdout, items)
+	}
+	for i := range items {
+		pr, err := ctx.API.CreatePullRequest(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo,
+			api.CreatePRInput{Head: items[i].Branch, Title: items[i].Title, Base: items[i].Base, Body: bodyFlag})
+		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) {
+				items[i].Error = serverMessage(apiErr)
+			} else {
+				items[i].Error = err.Error()
+			}
+			// Partial receipt goes to stdout before the error is returned so
+			// callers capturing stdout still get the completed items.
+			if werr := writeJSON(ctx.Stdout, items[:i+1]); werr != nil {
+				return werr
+			}
+			return &cli.Error{
+				Code: cli.ExitRuntime,
+				Msg:  fmt.Sprintf("batch stopped: %s failed", items[i].Branch),
+			}
+		}
+		items[i].Number = pr.Number
+		items[i].URL = pr.HTMLURL
 	}
 	return writeJSON(ctx.Stdout, items)
 }

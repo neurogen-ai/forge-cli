@@ -198,3 +198,141 @@ func TestBatchRequiresRepo(t *testing.T) {
 		t.Fatalf("want ExitContext, got %v", err)
 	}
 }
+
+// batchPostServer serves the repository default branch and routes POST
+// .../pulls through the caller-supplied per-request handler (n is the
+// 1-based POST count).
+func batchPostServer(t *testing.T, post func(n int, w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	t.Helper()
+	n := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls") {
+			n++
+			post(n, w, r)
+			return
+		}
+		fmt.Fprint(w, `{"default_branch":"main"}`)
+	}))
+}
+
+func TestBatchYesStopsOnFirstFailure(t *testing.T) {
+	repo := batchRepo(t, map[string]string{"b1": "one", "b2": "two", "b3": "three"})
+	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		if n == 3 {
+			w.WriteHeader(422)
+			fmt.Fprint(w, `{"message":"validation failed"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"number":%d,"html_url":"https://git.example.com/o/r/pull/%d"}`, 100+n, 100+n)
+	})
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx)
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitRuntime {
+		t.Fatalf("want ExitRuntime, got %v", err)
+	}
+	if cerr.Msg != "batch stopped: b3 failed" {
+		t.Fatalf("Msg = %q", cerr.Msg)
+	}
+	var items []BatchReceiptItem
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &items); err != nil {
+		t.Fatalf("receipt JSON: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %+v, want 3 (partial receipt includes the failure)", items)
+	}
+	if items[0].Number != 101 || items[0].URL != "https://git.example.com/o/r/pull/101" || items[0].Error != "" {
+		t.Fatalf("items[0] = %+v", items[0])
+	}
+	if items[1].Number != 102 || items[1].URL != "https://git.example.com/o/r/pull/102" || items[1].Error != "" {
+		t.Fatalf("items[1] = %+v", items[1])
+	}
+	if items[2].Error != "validation failed" {
+		t.Fatalf("items[2].Error = %q, want server message verbatim", items[2].Error)
+	}
+	if items[2].Number != 0 || items[2].URL != "" {
+		t.Fatalf("items[2] = %+v, want Number/URL unset", items[2])
+	}
+}
+
+func TestBatchYesFailsOnFirstPost(t *testing.T) {
+	repo := batchRepo(t, map[string]string{"b1": "one"})
+	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		fmt.Fprint(w, `{"message":"boom"}`)
+	})
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx)
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitRuntime {
+		t.Fatalf("want ExitRuntime, got %v", err)
+	}
+	var items []BatchReceiptItem
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &items); err != nil {
+		t.Fatalf("receipt JSON: %v", err)
+	}
+	if len(items) != 1 || items[0].Error != "boom" {
+		t.Fatalf("items = %+v, want exactly one item with Error \"boom\"", items)
+	}
+}
+
+func TestBatchYesStatelessSecondRun(t *testing.T) {
+	repo := batchRepo(t, map[string]string{"b1": "one"})
+	run := func() {
+		ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"number":7,"html_url":"https://git.example.com/o/r/pull/7"}`)
+		})
+		defer ts.Close()
+		ctx := testCtx(ts)
+		ctx.Repo = repo
+		if err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		var items []BatchReceiptItem
+		if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &items); err != nil {
+			t.Fatalf("receipt JSON: %v", err)
+		}
+		if len(items) != 1 || items[0].Number != 7 || items[0].Error != "" {
+			t.Fatalf("items = %+v, want one successful item", items)
+		}
+	}
+	run()
+	run() // fresh testCtx + fresh fixture server: no state carried between runs
+}
+
+func TestBatchYesAllSucceed(t *testing.T) {
+	repo := batchRepo(t, map[string]string{"b1": "one", "b2": "two"})
+	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"number":%d,"html_url":"https://git.example.com/o/r/pull/%d"}`, n, n)
+	})
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	if err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	var raw []map[string]any
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &raw); err != nil {
+		t.Fatalf("receipt JSON: %v", err)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("raw = %+v, want 2 items", raw)
+	}
+	for i, want := range []string{"b1", "b2"} {
+		if raw[i]["branch"] != want {
+			t.Fatalf("raw[%d] = %+v, want branch %q", i, raw[i], want)
+		}
+		for _, key := range []string{"number", "url"} {
+			if _, ok := raw[i][key]; !ok {
+				t.Errorf("raw[%d] missing %q", i, key)
+			}
+		}
+		if _, ok := raw[i]["error"]; ok {
+			t.Errorf("raw[%d] has unexpected \"error\" key", i)
+		}
+	}
+}
