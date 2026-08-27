@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -314,5 +316,151 @@ func TestDiagnoseSkippedOnAuthAndContextExits(t *testing.T) {
 		if strings.Count(err, "hint:") != 1 || !strings.Contains(err, "culprit named") {
 			t.Errorf("code %d: unexpected output:\n%s", c, err)
 		}
+	}
+}
+
+// tableCaptureCmd is a capture command that defaults to tabular output.
+type tableCaptureCmd struct {
+	captureCmd
+}
+
+func (c *tableCaptureCmd) DefaultIsTable() bool { return true }
+
+// runFormatCapture runs argv against a table-defaulting or JSON-only capture
+// command and returns the command, exit code, and stderr text.
+func runFormatCapture(t *testing.T, argv []string, tableDefault bool) (*captureCmd, int, string) {
+	t.Helper()
+	var reg *Registry
+	var cmd Command
+	if tableDefault {
+		wrapped := &tableCaptureCmd{captureCmd{name: "pr list"}}
+		reg = NewRegistry()
+		reg.Register(wrapped)
+		cmd = &wrapped.captureCmd
+	} else {
+		cmd = &captureCmd{name: "pr list"}
+		reg = NewRegistry()
+		reg.Register(cmd)
+	}
+	var stderr strings.Builder
+	code := Run(argv, reg, &Ctx{Stdout: &strings.Builder{}, Stderr: &stderr})
+	got, _ := cmd.(*captureCmd)
+	return got, code, stderr.String()
+}
+
+func TestFormatFlagsBeforeAndAfterCommandPath(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want Format
+	}{
+		{[]string{"--json", "pr", "list"}, FormatJSON},
+		{[]string{"pr", "list", "--json"}, FormatJSON},
+		{[]string{"--table", "pr", "list"}, FormatTable},
+		{[]string{"pr", "list", "--table"}, FormatTable},
+		{[]string{"-t", "pr", "list"}, FormatTable},
+		{[]string{"pr", "list", "-t"}, FormatTable},
+	}
+	for _, tc := range cases {
+		cmd, code, _ := runFormatCapture(t, tc.argv, true)
+		if code != ExitOK {
+			t.Fatalf("%v: exit = %d, want %d (stderr saw misuse)", tc.argv, code, ExitOK)
+		}
+		if cmd.gotCtx == nil || cmd.gotCtx.Format != tc.want {
+			t.Fatalf("%v: Format = %v, want %v", tc.argv, cmd.gotCtx.Format, tc.want)
+		}
+	}
+}
+
+func TestDefaultFormatIsZero(t *testing.T) {
+	cmd, code, _ := runFormatCapture(t, []string{"pr", "list"}, true)
+	if code != ExitOK || cmd.gotCtx == nil || cmd.gotCtx.Format != FormatDefault {
+		t.Fatalf("no flags: Format = %v, want FormatDefault (code %d)", cmd.gotCtx.Format, code)
+	}
+}
+
+func TestJSONAndTableTogetherIsUsage(t *testing.T) {
+	for _, argv := range [][]string{
+		{"--json", "--table", "pr", "list"},
+		{"pr", "list", "--json", "-t"},
+	} {
+		_, code, stderr := runFormatCapture(t, argv, true)
+		if code != ExitUsage {
+			t.Fatalf("%v: exit = %d, want %d", argv, code, ExitUsage)
+		}
+		if !strings.Contains(stderr, "not both") {
+			t.Fatalf("%v: stderr missing \"not both\":\n%s", argv, stderr)
+		}
+	}
+}
+
+func TestTableRejectedOnJSONOnlyCommand(t *testing.T) {
+	for _, argv := range [][]string{{"--table", "pr", "list"}, {"pr", "list", "-t"}} {
+		_, code, stderr := runFormatCapture(t, argv, false)
+		if code != ExitUsage {
+			t.Fatalf("%v: exit = %d, want %d", argv, code, ExitUsage)
+		}
+		if !strings.Contains(stderr, "pr list emits JSON only") {
+			t.Fatalf("%v: stderr must name the command:\n%s", argv, stderr)
+		}
+	}
+}
+
+func TestJSONAllowedOnJSONOnlyCommand(t *testing.T) {
+	cmd, code, _ := runFormatCapture(t, []string{"--json", "pr", "list"}, false)
+	if code != ExitOK || cmd.gotCtx == nil || cmd.gotCtx.Format != FormatJSON {
+		t.Fatalf("--json on JSON-only command: code=%d format=%v, want OK/FormatJSON", code, cmd.gotCtx.Format)
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	if isTerminal(&bytes.Buffer{}) {
+		t.Fatal("bytes.Buffer reported as terminal")
+	}
+	f, err := os.Open("/dev/null")
+	if err != nil {
+		t.Skipf("cannot open /dev/null: %v", err)
+	}
+	defer f.Close()
+	if !isTerminal(f) {
+		t.Fatal("/dev/null is a character device; isTerminal should be true")
+	}
+}
+
+func TestOutputIsJSONMatrix(t *testing.T) {
+	type row struct {
+		f              Format
+		defaultIsTable bool
+		tty            bool
+		want           bool
+		name           string
+	}
+	rows := []row{
+		{FormatJSON, true, true, true, "explicit JSON always JSON"},
+		{FormatJSON, false, false, true, "explicit JSON on JSON-only always JSON"},
+		{FormatTable, true, true, false, "explicit table wins over default"},
+		{FormatTable, false, false, false, "explicit table never JSON"},
+		{FormatDefault, true, true, false, "default+table+tty stays table"},
+		{FormatDefault, true, false, true, "default+table piped downgrades to JSON"},
+		{FormatDefault, false, true, true, "default non-table tty is JSON"},
+		{FormatDefault, false, false, true, "default non-table piped is JSON"},
+	}
+	for _, r := range rows {
+		if got := outputIsJSON(r.f, r.defaultIsTable, r.tty); got != r.want {
+			t.Errorf("%s: outputIsJSON(%v, %v, %v) = %v, want %v",
+				r.name, r.f, r.defaultIsTable, r.tty, got, r.want)
+		}
+	}
+}
+
+func TestOutputIsJSONThroughCtxWriterStubbing(t *testing.T) {
+	// End-to-end through OutputIsJSON with a buffer stdout: a table-defaulting
+	// command whose flags were unset behaves as if piped (JSON).
+	ctx := &Ctx{Stdout: &strings.Builder{}, Format: FormatDefault}
+	if !ctx.OutputIsJSON(ctx.Stdout, true) {
+		t.Fatal("buffered stdout + table default must decide JSON")
+	}
+	ctx = &Ctx{Stdout: &strings.Builder{}, Format: FormatTable}
+	if ctx.OutputIsJSON(ctx.Stdout, true) {
+		t.Fatal("explicit table must win even when piped")
 	}
 }
