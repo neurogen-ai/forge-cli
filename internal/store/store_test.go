@@ -62,6 +62,75 @@ func TestWriteJSONPrettyPrints(t *testing.T) {
 	}
 }
 
+func TestWriteFileRejectsNonDirectChildNames(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"", "/abs.json", "sub/x.json", "a/", "..", "."} {
+		p, err := WriteFile(dir, name, []byte("x"))
+		if err == nil {
+			t.Errorf("name %q: expected error, got path %s", name, p)
+		}
+		if p != "" {
+			t.Errorf("name %q: path = %q, want empty", name, p)
+		}
+	}
+	// A failed validation must leave no file and no directory behind.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("rejected names created %d entries, want 0", len(entries))
+	}
+}
+
+func TestWriteFileOverwritesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	p, err := WriteFile(dir, "repo-7.diff", []byte("old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := WriteFile(dir, "repo-7.diff", []byte("new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2 != p {
+		t.Errorf("rewrite path = %s, want %s", p2, p)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Errorf("content = %q, want replaced content", data)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("entry count = %d, want 1", len(entries))
+	}
+}
+
+func TestWriteFileCreatesDir(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "pr-conversation")
+	p, err := WriteFile(nested, "repo-9.patch", []byte("bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(p) != "repo-9.patch" {
+		t.Errorf("path = %s", p)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "bytes" {
+		t.Errorf("content = %q", data)
+	}
+}
+
 func TestResolveDirsExpandsHomeAndRoot(t *testing.T) {
 	dirs := ResolveDirs(map[string]string{
 		"issue": ".forge/issues",

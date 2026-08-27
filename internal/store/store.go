@@ -11,18 +11,29 @@ import (
 	"strings"
 )
 
-// Write stores data as pretty-printed JSON at <dir>/<repo>-<number>.json,
-// replacing any previous copy in place. Pulled dumps are current snapshots,
-// one file per item; there are no timestamped variants. Returns the path.
-func Write(dir, repo string, number int, data []byte) (string, error) {
+// WriteFile writes data to one direct child of dir, replacing an existing
+// file. It returns the absolute or caller-resolved path it wrote. name must
+// be a bare filename: empty, absolute, or path-containing names are rejected
+// without creating dir or any file.
+func WriteFile(dir, name string, data []byte) (string, error) {
+	if name == "" || filepath.IsAbs(name) || strings.ContainsRune(name, filepath.Separator) || strings.ContainsRune(name, '/') || name == "." || name == ".." {
+		return "", fmt.Errorf("store: invalid filename %q", name)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("store: create %s: %w", dir, err)
 	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%d.json", repo, number))
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("store: write %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// Write stores data as pretty-printed JSON at <dir>/<repo>-<number>.json,
+// replacing any previous copy in place. Pulled dumps are current snapshots,
+// one file per item; there are no timestamped variants. Returns the path.
+func Write(dir, repo string, number int, data []byte) (string, error) {
+	return WriteFile(dir, fmt.Sprintf("%s-%d.json", repo, number), data)
 }
 
 // WriteJSON marshals v with two-space indent then delegates to Write.
