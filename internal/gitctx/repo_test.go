@@ -101,6 +101,122 @@ func TestCurrentBranchOutsideRepoIsEmpty(t *testing.T) {
 	}
 }
 
+func TestCommitSubject(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("checkout", "-b", "topic")
+	if err := os.WriteFile(dir+"/file.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "feat: add file\n\nbody line")
+
+	if got := CommitSubject(dir, "topic"); got != "feat: add file" {
+		t.Errorf("CommitSubject = %q, want %q", got, "feat: add file")
+	}
+}
+
+func TestCommitSubjectMissingRefIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if got := CommitSubject(dir, "no-such-ref"); got != "" {
+		t.Errorf("CommitSubject of missing ref = %q, want \"\"", got)
+	}
+}
+
+func TestUniqueCommitCount(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	base := CurrentBranch(dir) // default branch, main or master depending on git
+
+	run("checkout", "-b", "feature")
+
+	commit := func(msg string) {
+		t.Helper()
+		if err := os.WriteFile(dir+"/f.txt", []byte(msg+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", ".")
+		run("commit", "-m", msg)
+	}
+
+	commit("first unique commit")
+	n, err := UniqueCommitCount(dir, base, "feature")
+	if err != nil {
+		t.Fatalf("UniqueCommitCount: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("after one commit: count = %d, want 1", n)
+	}
+
+	commit("second unique commit")
+	n, err = UniqueCommitCount(dir, base, "feature")
+	if err != nil {
+		t.Fatalf("UniqueCommitCount second pass: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("after two commits: count = %d, want 2", n)
+	}
+}
+
+func TestUniqueCommitCountMissingBaseErrors(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if _, err := UniqueCommitCount(dir, "no-such-base", "HEAD"); err == nil {
+		t.Error("UniqueCommitCount with missing base: want error, got nil")
+	}
+}
+
+func TestLocalBranchesContentsAndOrdering(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("branch", "alpha")
+	run("branch", "beta")
+
+	branches := LocalBranches(dir)
+	if len(branches) != 3 {
+		t.Fatalf("LocalBranches = %v, want 3 branches", branches)
+	}
+	for i := 1; i < len(branches); i++ {
+		if branches[i-1] >= branches[i] {
+			t.Errorf("LocalBranches not sorted: %v", branches)
+		}
+	}
+	found := map[string]bool{}
+	for _, b := range branches {
+		found[b] = true
+	}
+	base := CurrentBranch(dir)
+	for _, want := range []string{base, "alpha", "beta"} {
+		if !found[want] {
+			t.Errorf("LocalBranches missing branch %q (got %v)", want, branches)
+		}
+	}
+}
+
+// gitRunner returns a run helper that fails the test when a git command in
+// dir errors.
+func gitRunner(t *testing.T, dir string) func(args ...string) {
+	t.Helper()
+	requireGit(t)
+	return func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+}
+
 func filepathIsAbs(p string) bool {
 	return len(p) > 0 && os.IsPathSeparator(p[0])
 }

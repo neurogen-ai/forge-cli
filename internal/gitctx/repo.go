@@ -3,6 +3,7 @@ package gitctx
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -45,6 +46,37 @@ func CurrentBranch(root string) string {
 		return ""
 	}
 	return out
+}
+
+// CommitSubject returns the first line (subject) of the commit at ref, or ""
+// when ref does not resolve or has no message. Trailing whitespace trimmed.
+func CommitSubject(root, ref string) string {
+	out, err := git(root, "log", "-1", "--format=%s", ref)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// UniqueCommitCount returns how many commits HEAD-side has that base-side
+// lacks (`git rev-list --count base..head`). Error when either ref does not
+// resolve; the caller owns deciding what "missing base" means.
+func UniqueCommitCount(root, base, head string) (int, error) {
+	out, err := git(root, "rev-list", "--count", base+".."+head)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
+}
+
+// LocalBranches lists short names of all local branches
+// (`git for-each-ref refs/heads --format=%(refname:short)`), empty when none.
+func LocalBranches(root string) []string {
+	out, err := git(root, "for-each-ref", "refs/heads", "--format=%(refname:short)")
+	if err != nil || out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
 }
 
 // git runs git in dir and returns trimmed stdout. A failed command whose
