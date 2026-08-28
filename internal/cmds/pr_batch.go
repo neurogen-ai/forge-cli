@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"forge/internal/api"
@@ -25,6 +26,13 @@ type BatchReceiptItem struct {
 	Number int64  `json:"number,omitempty"`
 	URL    string `json:"url,omitempty"`
 	Error  string `json:"error,omitempty"`
+}
+
+// looksLikeDuplicatePR reports whether a server error message indicates the
+// batch PR already exists for that head branch. Provisional: refine this
+// matcher and its test together when the live Forgejo wording is confirmed.
+func looksLikeDuplicatePR(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "already exists")
 }
 
 // pagePollAttempts and pagePollDelay bound the page-availability wait after
@@ -181,6 +189,13 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) {
 				items[i].Error = serverMessage(apiErr)
+				// A duplicate-PR response is a skip, not a failure (release
+				// doc §2): the batch continues and the server message stays
+				// verbatim in Error so stdout still shows why no PR landed.
+				if looksLikeDuplicatePR(items[i].Error) {
+					fmt.Fprintf(ctx.Stderr, "skipped: %s (PR already exists)\n", items[i].Branch)
+					continue
+				}
 			} else {
 				items[i].Error = err.Error()
 			}

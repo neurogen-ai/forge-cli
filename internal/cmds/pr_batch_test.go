@@ -569,3 +569,110 @@ func TestBatchYesNotesWhenPageNeverAvailable(t *testing.T) {
 		t.Fatalf("items = %+v, want one successful item (timeout is not a failure)", items)
 	}
 }
+
+// ---- looksLikeDuplicatePR ----
+
+func TestLooksLikeDuplicatePRMatches(t *testing.T) {
+	for _, msg := range []string{
+		// release doc §2's example wording
+		"PR already exists for that branch -> main",
+		// plausible Forgejo/Gitea variants (matcher is deliberately loose)
+		"pull request already exists for these branches [main:feat-x, feat-x:main]",
+		"a pull request is already open: already exists for this head",
+		"ALREADY EXISTS",
+	} {
+		if !looksLikeDuplicatePR(msg) {
+			t.Errorf("looksLikeDuplicatePR(%q) = false, want true", msg)
+		}
+	}
+}
+
+func TestLooksLikeDuplicatePRDoesNotMatch(t *testing.T) {
+	for _, msg := range []string{
+		"validation failed",
+		"(no message in response body)",
+		"base branch does not exist",
+		"already", // partial phrase
+		"rate limited, try again later",
+	} {
+		if looksLikeDuplicatePR(msg) {
+			t.Errorf("looksLikeDuplicatePR(%q) = true, want false", msg)
+		}
+	}
+}
+
+// TestBatchYesDuplicateIsSkipNotFailure: b2's POST returns a duplicate-PR
+// APIError; the batch must continue to b3, print the skip note on stderr,
+// keep the server message verbatim in the receipt item's Error, and exit 0.
+func TestBatchYesDuplicateIsSkipNotFailure(t *testing.T) {
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"b1": {Subject: "one", Date: 1700000000},
+		"b2": {Subject: "two", Date: 1700000000},
+		"b3": {Subject: "three", Date: 1700000000},
+	})
+	var htmlURLPrefix string
+	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		if n == 2 {
+			w.WriteHeader(409)
+			fmt.Fprint(w, `{"message":"PR already exists for that branch -> main"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"number":%d,"html_url":%q}`, n, htmlURLPrefix+fmt.Sprintf("/o/r/pull/%d", n))
+	})
+	htmlURLPrefix = ts.URL
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	if err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx); err != nil {
+		t.Fatalf("want exit 0 (batch continues past duplicate), got %v", err)
+	}
+	if want := "skipped: b2 (PR already exists)\n"; !strings.Contains(ctx.Stderr.(*bytes.Buffer).String(), want) {
+		t.Fatalf("stderr = %q, want %q", ctx.Stderr.(*bytes.Buffer).String(), want)
+	}
+	var items []BatchReceiptItem
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &items); err != nil {
+		t.Fatalf("receipt JSON: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %+v, want 3 (duplicate stays in the receipt)", items)
+	}
+	if items[0].Number != 1 || items[2].Number != 3 {
+		t.Fatalf("items[0]/items[2] = %+v/%+v, want the batch to continue", items[0], items[2])
+	}
+	if items[1].Error != "PR already exists for that branch -> main" {
+		t.Fatalf("items[1].Error = %q, want server message verbatim", items[1].Error)
+	}
+	if items[1].Number != 0 || items[1].URL != "" {
+		t.Fatalf("items[1] = %+v, want Number/URL unset", items[1])
+	}
+}
+
+// TestBatchYesOtherFailuresStillStop: a non-duplicate failure keeps
+// stop-on-first-failure (branch after the failure is never POSTed).
+func TestBatchYesOtherFailuresStillStop(t *testing.T) {
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"b1": {Subject: "one", Date: 1700000000},
+		"b2": {Subject: "two", Date: 1700000000},
+		"b3": {Subject: "three", Date: 1700000000},
+	})
+	var htmlURLPrefix string
+	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		if n == 1 {
+			// "already exists"-adjacent but non-duplicate phrasing must not
+			// trip the matcher into skipping.
+			w.WriteHeader(422)
+			fmt.Fprint(w, `{"message":"validation failed: title already taken"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"number":%d,"html_url":%q}`, n, htmlURLPrefix+fmt.Sprintf("/o/r/pull/%d", n))
+	})
+	htmlURLPrefix = ts.URL
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx)
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitRuntime || cerr.Msg != "batch stopped: b1 failed" {
+		t.Fatalf("want ExitRuntime stop-on-first-failure, got %v", err)
+	}
+}
