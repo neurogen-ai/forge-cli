@@ -153,14 +153,19 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 
 	path := argv[i]
 	cmd := reg.Lookup(path)
-	// Multi-word command names ("cache flush", "pr list"): the registry keys
-	// on the full name, so try joining the next token before giving up.
+	// Multi-word command names ("pr review list", "cache flush"): the registry
+	// keys on the full name, so extend the path token by token until the
+	// accumulated prefix resolves. Intermediates need not resolve themselves
+	// ("pr comment" is not a command; "pr comment add" is). The longest match
+	// wins, so tokens are only consumed by a command that actually exists.
 	consumed := 1
-	if cmd == nil && i+1 < len(argv) {
-		if joined := path + " " + argv[i+1]; reg.Lookup(joined) != nil {
-			path = joined
-			cmd = reg.Lookup(joined)
-			consumed = 2
+	if cmd == nil {
+		for j := 2; j <= len(argv)-i; j++ {
+			if c := reg.Lookup(strings.Join(argv[i:i+j], " ")); c != nil {
+				path = strings.Join(argv[i:i+j], " ")
+				cmd = c
+				consumed = j
+			}
 		}
 	}
 

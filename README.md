@@ -98,6 +98,13 @@ forge pr get N
 forge pr list [--state open|closed|all] [--page N] [--limit M]
 forge pr conv N [--all] [--min-unresolved N]
 forge pr create-batch PATTERN [--base B] [--body TEXT] [--yes]
+forge pr review submit N --state approve|request-changes|comment [--body T]
+forge pr comment add N --body T
+forge pr close N
+forge pr reopen N
+forge pr ready N
+forge pr diff N [--patch] [--out]
+forge pr merge N --merge|--squash|--rebase [--subject S] [--body T] [--delete]
 ```
 
 `pr create` defaults `--head` to the current branch and `--base` to the
@@ -134,6 +141,70 @@ JSON.
 
 Note: the old `pr conversation` spelling was removed in v0.3.0 — use
 `pr conv`.
+
+### Review and comment writes
+
+`pr review submit N --state S` posts exactly one review. `--state` accepts
+`approve`, `request-changes`, or `comment`; `request-changes` requires
+`--body` (missing body exits 2 before any request is sent), the other two
+take an optional `--body`. The receipt is the created review's id and state:
+
+```json
+{"id": 41, "state": "APPROVED"}
+```
+
+`pr comment add N --body T` and `issue comment add N --body T` post one
+comment each; Forgejo backs both with the same issue-comment endpoint, so
+both spellings print the same receipt shape. A missing `--body` is a usage
+error and sends no request:
+
+```json
+{"id": 123456, "html_url": "https://host/o/r/issues/6#issuecomment-123456"}
+```
+
+### PR state verbs
+
+`pr close N`, `pr reopen N`, and `pr ready N` each send one PATCH
+(`{"state":"closed"}`, `{"state":"open"}`, `{"draft":false}`) and print
+the updated pull request JSON. No prompts, no confirmation, no retry. A
+server that does not support draft changes surfaces its message through the
+normal error path.
+
+### Diff
+
+`pr diff N` prints the server's raw `.diff` bytes on stdout exactly as
+received — no trailing newline, no JSON wrapper. `--patch` selects the
+`.patch` representation instead. `--out` writes the same bytes below the
+`pr-conversation` savedir as `<repo>-N.diff` (or `<repo>-N.patch` with
+`--patch`), replacing any previous copy for that PR and format, and prints a
+receipt instead of the diff:
+
+```json
+{"path": "/abs/path/to/repo/.forge/cache/prs/r-42.diff", "bytes": 1873}
+```
+
+Nothing is cached without `--out`; stdout requests write no files.
+
+### Merge
+
+`pr merge N` requires exactly one strategy flag: `--merge`, `--squash`, or
+`--rebase`. Missing or multiple strategy flags exit 2 before any request.
+`--subject` and `--body` map to the merge title and message. Conflicts, WIP
+branches, and protection failures come back from the server verbatim with
+exit 1; forge never retries, force-merges, or updates branches implicitly.
+
+`--delete` first fetches the PR to capture its head ref, merges, and only
+then deletes the head branch ref. A failed merge never triggers a delete; a
+failed delete after a successful merge still prints the receipt with
+`head_deleted: false` alongside the error, so the successful merge is not
+hidden:
+
+```json
+{"index": 42, "action": "merge", "head_deleted": false}
+```
+
+Future work, not shipped: the `forge api` passthrough and `forge search`
+(v0.5.0) and an auto-sync service (v0.6.0) — see `plans/releases/`.
 
 ### Resolution
 
@@ -179,6 +250,7 @@ forge issue list [--state ...] [--page N] [--limit M]
 forge issue get N
 forge issue close N
 forge issue open N
+forge issue comment add N --body T
 ```
 
 `--label` takes label names and resolves them to ids via the labels API.

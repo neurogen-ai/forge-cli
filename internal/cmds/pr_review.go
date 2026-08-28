@@ -1,9 +1,11 @@
 package cmds
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
+	"forge/internal/api"
 	"forge/internal/cli"
 	"forge/internal/table"
 )
@@ -94,4 +96,80 @@ unresolved and total inline-comment counts. Rows appear in server order.
 
 Prints a table on an interactive terminal; JSON elsewhere. --json forces JSON,
 --table forces the table.`
+}
+
+// ---- pr review submit ----
+
+type reviewSubmitCmd struct{}
+
+func (reviewSubmitCmd) Name() string { return "pr review submit" }
+func (reviewSubmitCmd) Summary() string {
+	return "submit one review on a pull request [--state S] [--body T]"
+}
+func (reviewSubmitCmd) RequiresAPI() bool { return true }
+
+// ReviewReceipt is the stable mutation output for review submission.
+type ReviewReceipt struct {
+	ID    int64  `json:"id"`
+	State string `json:"state"`
+}
+
+// reviewEvent maps a CLI --state spelling to the exact Forgejo review event.
+// request-changes requires a non-empty body; the other events do not.
+func reviewEvent(state, body string) (string, error) {
+	switch state {
+	case "approve":
+		return "APPROVED", nil
+	case "comment":
+		return "COMMENT", nil
+	case "request-changes":
+		if body == "" {
+			return "", &cli.Error{
+				Code: cli.ExitUsage,
+				Msg:  "pr review submit: --state request-changes requires --body",
+				Hint: "explain what must change, or use --state comment for a non-blocking note",
+			}
+		}
+		return "REQUEST_CHANGES", nil
+	default:
+		return "", &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  fmt.Sprintf("pr review submit: --state must be approve, request-changes, or comment (got %q)", state),
+		}
+	}
+}
+
+func (reviewSubmitCmd) Run(args []string, ctx *cli.Ctx) error {
+	n, err := parseIndex(args, "pr review submit")
+	if err != nil {
+		return err
+	}
+	state, _ := flagValue(args, "--state")
+	body, _ := flagValue(args, "--body")
+	event, err := reviewEvent(state, body)
+	if err != nil {
+		return err
+	}
+	review, err := ctx.API.SubmitReview(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, api.SubmitReviewInput{Event: event, Body: body})
+	if err != nil {
+		return mapErr(err)
+	}
+	return writeJSON(ctx.Stdout, ReviewReceipt{ID: review.ID, State: review.State})
+}
+
+func (reviewSubmitCmd) HelpPage() string {
+	return `use: forge pr review submit N --state approve|request-changes|comment [--body T]
+
+Submit one review on pull request N and print a JSON receipt {id, state}.
+--state is required and accepts exactly one of:
+
+  approve          APPROVED
+  request-changes  REQUEST_CHANGES (requires --body)
+  comment          COMMENT
+
+--body supplies the review text; it is required for request-changes and
+optional otherwise.
+
+Single-shot: one POST, one receipt. The receipt is the full output; --table
+is rejected.`
 }

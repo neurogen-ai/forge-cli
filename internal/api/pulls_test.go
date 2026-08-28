@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,66 @@ func TestCreatePullRequestPathAndBody(t *testing.T) {
 	}
 	if gotBody["head"] != "h" || gotBody["title"] != "t" {
 		t.Errorf("body = %v", gotBody)
+	}
+}
+
+func TestSubmitReview(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if got := r.Header.Get("Authorization"); got != "token tok" {
+			t.Errorf("Authorization = %q", got)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(Review{ID: 42, State: "APPROVED"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	// Body present: request bytes are exactly {"event":"APPROVED","body":"..."}.
+	rev, err := c.SubmitReview("o", "r", 5, SubmitReviewInput{Event: "APPROVED", Body: "looks good"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/5/reviews" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"event":"APPROVED","body":"looks good"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if rev.ID != 42 || rev.State != "APPROVED" {
+		t.Errorf("review = %+v", rev)
+	}
+
+	// Empty Body is omitted from the request bytes.
+	rev, err = c.SubmitReview("o", "r", 5, SubmitReviewInput{Event: "COMMENT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"event":"COMMENT"}` {
+		t.Errorf("empty-body request = %q", gotBody)
+	}
+	if rev.ID != 42 {
+		t.Errorf("review.ID = %d", rev.ID)
+	}
+}
+
+func TestSubmitReviewAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"event must be one of"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).SubmitReview("o", "r", 5, SubmitReviewInput{Event: "BOGUS"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "event must be one of" {
+		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
 
@@ -302,5 +363,207 @@ func TestAPIErrorFromServerMessage(t *testing.T) {
 	}
 	if apiErr.Status != 404 || apiErr.Message != "page does not exist" {
 		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestSetPRState(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(PullRequest{Number: 7, State: "closed"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	pr, err := c.SetPRState("o", "r", 7, "closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/pulls/7" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"state":"closed"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if pr.Number != 7 || pr.State != "closed" {
+		t.Errorf("pr = %+v", pr)
+	}
+
+	// Reopen sends {"state":"open"} to the same endpoint.
+	pr, err = c.SetPRState("o", "r", 7, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"state":"open"}` {
+		t.Errorf("open body = %q", gotBody)
+	}
+	if pr.State != "closed" {
+		t.Errorf("decoded State = %q", pr.State)
+	}
+}
+
+func TestSetPRDraft(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(PullRequest{Number: 9, State: "open"})
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).SetPRDraft("o", "r", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/pulls/9" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"draft":false}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if pr.Number != 9 || pr.State != "open" {
+		t.Errorf("pr = %+v", pr)
+	}
+}
+
+func TestSetPRDraftAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"draft flag is not supported"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).SetPRDraft("o", "r", 9)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "draft flag is not supported" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestGetPullDiff(t *testing.T) {
+	for _, tc := range []struct{ format, path, contentType string }{
+		{"diff", "/api/v1/repos/o/r/pulls/5.diff", "text/plain; charset=utf-8"},
+		{"patch", "/api/v1/repos/o/r/pulls/5.patch", "text/x-patch"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			const body = "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n"
+			var gotMethod, gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Write([]byte(body))
+			}))
+			defer ts.Close()
+
+			raw, err := newTestClient(ts).GetPullDiff("o", "r", 5, tc.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotMethod != "GET" || gotPath != tc.path {
+				t.Errorf("got %s %s", gotMethod, gotPath)
+			}
+			if raw.Status != 200 {
+				t.Errorf("Status = %d, want 200", raw.Status)
+			}
+			if raw.ContentType != tc.contentType {
+				t.Errorf("ContentType = %q, want %q", raw.ContentType, tc.contentType)
+			}
+			if string(raw.Body) != body {
+				t.Errorf("Body = %q, want exact bytes", raw.Body)
+			}
+		})
+	}
+}
+
+func TestMergePullStrategies(t *testing.T) {
+	cases := []struct{ do string }{{"merge"}, {"squash"}, {"rebase"}}
+	for _, tc := range cases {
+		t.Run(tc.do, func(t *testing.T) {
+			var gotMethod, gotPath, gotBody string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				raw, _ := io.ReadAll(r.Body)
+				gotBody = string(raw)
+				w.WriteHeader(200)
+			}))
+			defer ts.Close()
+
+			err := newTestClient(ts).MergePull("o", "r", 5, MergeInput{Do: tc.do})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/5/merge" {
+				t.Errorf("got %s %s", gotMethod, gotPath)
+			}
+			if gotBody != fmt.Sprintf(`{"Do":%q}`, tc.do) {
+				t.Errorf("body = %q, want only Do", gotBody)
+			}
+		})
+	}
+}
+
+func TestMergePullOptionalFields(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		// Forgejo returns 204 with an empty body on a successful merge.
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	in := MergeInput{Do: "merge", MergeTitleField: "t", MergeMessageField: "m"}
+	if err := newTestClient(ts).MergePull("o", "r", 5, in); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"Do":"merge","MergeTitleField":"t","MergeMessageField":"m"}`
+	if gotBody != want {
+		t.Errorf("body = %q, want %q", gotBody, want)
+	}
+}
+
+func TestMergePullNon2xx(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+		w.Write([]byte(`{"message":"pull request is conflicted"}`))
+	}))
+	defer ts.Close()
+
+	err := newTestClient(ts).MergePull("o", "r", 5, MergeInput{Do: "merge"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	if apiErr.Status != 409 || apiErr.Message != "pull request is conflicted" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestDeleteRef(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).DeleteRef("o", "r", "feature-branch"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" || gotPath != "/api/v1/repos/o/r/git/refs/heads/feature-branch" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != "" {
+		t.Errorf("body = %q, want no body", gotBody)
 	}
 }

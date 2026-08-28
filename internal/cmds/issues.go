@@ -185,5 +185,6 @@ func IssueCommands() []cli.Command {
 	return []cli.Command{
 		issueCreateCmd{}, issueGetCmd{}, issueListCmd{},
 		issueStateCmd{closing: true}, issueStateCmd{closing: false},
+		commentAddCmd{kind: "issue"},
 	}
 }
