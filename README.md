@@ -104,7 +104,7 @@ forge pr close N
 forge pr reopen N
 forge pr ready N
 forge pr diff N [--patch] [--out]
-forge pr merge N --merge|--squash|--rebase [--delete] [--subject S] [--body T]
+forge pr merge N --merge|--squash|--rebase [--subject S] [--body T] [--delete]
 ```
 
 `pr create` defaults `--head` to the current branch and `--base` to the
