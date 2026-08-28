@@ -3,8 +3,12 @@ package cmds
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"path"
 	"sort"
+	"strings"
+	"time"
 
 	"forge/internal/api"
 	"forge/internal/cli"
@@ -22,6 +26,42 @@ type BatchReceiptItem struct {
 	Number int64  `json:"number,omitempty"`
 	URL    string `json:"url,omitempty"`
 	Error  string `json:"error,omitempty"`
+}
+
+// looksLikeDuplicatePR reports whether a server error message indicates the
+// batch PR already exists for that head branch. Provisional: refine this
+// matcher and its test together when the live Forgejo wording is confirmed.
+func looksLikeDuplicatePR(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "already exists")
+}
+
+// pagePollAttempts and pagePollDelay bound the page-availability wait after
+// each POST (release doc §2: ~5 attempts, ~500ms apart). Vars so tests can
+// shrink the wait.
+var (
+	pagePollAttempts = 5
+	pagePollDelay    = 500 * time.Millisecond
+)
+
+// pollPRPage GETs url up to attempts times, delay apart, without decoding
+// the body or sending credentials. Reports whether any response had a
+// status below 400; transport errors count as not-ready.
+func pollPRPage(client *http.Client, url string, attempts int, delay time.Duration) bool {
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(delay)
+		}
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 400 {
+			return true
+		}
+	}
+	return false
 }
 
 type createBatchCmd struct{}
@@ -138,6 +178,10 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 	if !yes {
 		return writeJSON(ctx.Stdout, items)
 	}
+	// Page probe: unauthenticated by design (release doc §2) — the api client
+	// is not reused, so no credentials ride along and the client is the single
+	// knob for timeout.
+	probe := &http.Client{}
 	for i := range items {
 		pr, err := ctx.API.CreatePullRequest(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo,
 			api.CreatePRInput{Head: items[i].Branch, Title: items[i].Title, Base: items[i].Base, Body: bodyFlag})
@@ -145,6 +189,13 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) {
 				items[i].Error = serverMessage(apiErr)
+				// A duplicate-PR response is a skip, not a failure (release
+				// doc §2): the batch continues and the server message stays
+				// verbatim in Error so stdout still shows why no PR landed.
+				if looksLikeDuplicatePR(items[i].Error) {
+					fmt.Fprintf(ctx.Stderr, "skipped: %s (PR already exists)\n", items[i].Branch)
+					continue
+				}
 			} else {
 				items[i].Error = err.Error()
 			}
@@ -160,6 +211,9 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 		}
 		items[i].Number = pr.Number
 		items[i].URL = pr.HTMLURL
+		if !pollPRPage(probe, pr.HTMLURL, pagePollAttempts, pagePollDelay) {
+			fmt.Fprintf(ctx.Stderr, "note: %s page not confirmed available before continuing\n", items[i].Branch)
+		}
 	}
 	return writeJSON(ctx.Stdout, items)
 }

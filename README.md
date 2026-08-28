@@ -127,6 +127,26 @@ forge pr create-batch 'v0.4.0*'        # plan, posts nothing
 forge pr create-batch 'v0.4.0*' --yes  # posts, stops on first failure
 ```
 
+The plan is ordered oldest tip first by committer date, so stack parents
+post before the branches that contain them; equal dates fall through to
+ancestry (stack parent first), then lexical. Branches that cannot be
+planned are skipped with a note on stderr:
+`skipped: <branch> (no commit subject)` for a tip without a commit
+subject, `skipped: <branch> (already in base)` for a tip already
+contained in the resolved base. If nothing remains after the skips, the
+command exits 2. The ordering and the containment preflight answer the
+empty-parent-PR failure v0.3.1 shipped with; see
+`plans/releases/v0.4.1.md` for the root cause on record.
+
+With `--yes`, after each POST the client waits for the PR page to become
+reachable before posting the next branch — bounded retries, about 5
+attempts 500ms apart, unauthenticated — and a timeout only prints
+`note: <branch> page not confirmed available before continuing`; the
+batch continues. A duplicate-PR server response is also a skip, not a
+failure: `skipped: <branch> (PR already exists)`, and the remaining
+branches still post. The matcher on the server's message is provisional
+until confirmed against the live Forgejo instance.
+
 A 404 at create time is diagnosed: the command checks whether the base and
 head branches exist and reports which one is missing, or says the repo does
 not accept pull requests if both exist. The server's original message stays
