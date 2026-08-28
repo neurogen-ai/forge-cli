@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -15,9 +16,27 @@ import (
 	"forge/internal/gitctx"
 )
 
-// batchRepo creates a temp git repo with the named branches, each carrying a
-// commit with the given subject on top of an initial commit on main.
-func batchRepo(t *testing.T, branches map[string]string) *gitctx.Repo {
+// batchBranch is one branch spec for batchRepoDated.
+type batchBranch struct {
+	Subject string
+	// Date pins the tip commit's author and committer dates as unix
+	// seconds ("@<unix>"), so ordering assertions are deterministic
+	// across second boundaries. 0 leaves the commit's natural date.
+	Date int64
+	// From is the branch point (existing branch or ref) the new branch
+	// starts from; empty means main. Stacked branches set From to their
+	// parent so ancestry tie-breaks are testable.
+	From string
+	// NoCommit creates the branch without a tip commit, so its tip
+	// equals its branch point (usually main) and is contained in main.
+	NoCommit bool
+}
+
+// batchRepoDated creates a temp git repo with the named branches, each
+// carrying a commit with the spec's subject on top of an initial commit on
+// main. The Date field pins the tip commit's dates via GIT_AUTHOR_DATE and
+// GIT_COMMITTER_DATE.
+func batchRepoDated(t *testing.T, branches map[string]batchBranch) *gitctx.Repo {
 	t.Helper()
 	dir := t.TempDir()
 	run := func(args ...string) {
@@ -35,14 +54,48 @@ func batchRepo(t *testing.T, branches map[string]string) *gitctx.Repo {
 		run(args...)
 	}
 	run("commit", "--allow-empty", "-m", "init")
-	for branch, subject := range branches {
-		run("branch", branch)
-		cmd := exec.Command("git", "checkout", "-q", branch)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git checkout %s: %v: %s", branch, err, out)
+	// Process specs after their From branch exists; map iteration order is
+	// random, so stacked branches need dependency-aware ordering.
+	pending := make(map[string]batchBranch, len(branches))
+	for branch, spec := range branches {
+		pending[branch] = spec
+	}
+	for len(pending) > 0 {
+		progress := false
+		for branch, spec := range pending {
+			start := spec.From
+			if start == "" {
+				start = "main"
+			}
+			if start != "main" {
+				if _, ok := branches[start]; !ok && start != "HEAD" {
+					continue
+				}
+				if _, ok := pending[start]; ok {
+					continue
+				}
+			}
+			run("checkout", "-q", "-b", branch, start)
+			cmd := exec.Command("git", "commit", "--allow-empty", "--allow-empty-message", "-m", spec.Subject)
+			if spec.NoCommit {
+				delete(pending, branch)
+				progress = true
+				continue
+			}
+			if spec.Date != 0 {
+				d := fmt.Sprintf("@%d +0000", spec.Date)
+				cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+d, "GIT_COMMITTER_DATE="+d)
+			}
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git commit on %s: %v: %s", branch, err, out)
+			}
+			delete(pending, branch)
+			progress = true
 		}
-		run("commit", "--allow-empty", "--allow-empty-message", "-m", subject)
+		if !progress {
+			t.Fatalf("unresolvable From chain in branches %v", pending)
+		}
 	}
 	cmd := exec.Command("git", "checkout", "-q", "main")
 	cmd.Dir = dir
@@ -50,6 +103,17 @@ func batchRepo(t *testing.T, branches map[string]string) *gitctx.Repo {
 		t.Fatalf("git checkout main: %v: %s", err, out)
 	}
 	return &gitctx.Repo{Root: dir}
+}
+
+// batchRepo creates a temp git repo with the named branches, each carrying a
+// commit with the given subject on top of an initial commit on main. Tip
+// dates are natural (now); use batchRepoDated to pin them.
+func batchRepo(t *testing.T, branches map[string]string) *gitctx.Repo {
+	specs := make(map[string]batchBranch, len(branches))
+	for branch, subject := range branches {
+		specs[branch] = batchBranch{Subject: subject}
+	}
+	return batchRepoDated(t, specs)
 }
 
 // batchServer returns an httptest server serving the repository default
@@ -88,7 +152,13 @@ func TestBatchGlobDoesNotCrossSlash(t *testing.T) {
 }
 
 func TestBatchPlanSortedLexically(t *testing.T) {
-	repo := batchRepo(t, map[string]string{"b2": "two", "b1": "one", "b3": "three"})
+	// Equal pinned dates force the lexical tie-break; without pinning the
+	// three commits could land in different seconds.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"b1": {Subject: "one", Date: 1700000000},
+		"b2": {Subject: "two", Date: 1700000000},
+		"b3": {Subject: "three", Date: 1700000000},
+	})
 	out := &strings.Builder{}
 	ctx := &cli.Ctx{Stdout: out, Stderr: &strings.Builder{}, GlobalFlags: cli.GlobalFlags{Host: "git.example.com", Owner: "o", Repo: "r"}, Repo: repo, Cfg: &config.Config{Defaults: config.Defaults{Base: "main"}}}
 	if err := (createBatchCmd{}).Run([]string{"b*"}, ctx); err != nil {
@@ -109,7 +179,13 @@ func TestBatchPlanSortedLexically(t *testing.T) {
 }
 
 func TestBatchSkippedEmptySubject(t *testing.T) {
-	repo := batchRepo(t, map[string]string{"empty": "", "good": "real title"})
+	// Pinned in the past so both branch tips sort before main's natural
+	// (now) init commit deterministically. Pattern "*" also matches main,
+	// whose tip is the base itself: contained, hence the second note.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"empty": {Subject: "", Date: 1700000000},
+		"good":  {Subject: "real title", Date: 1700000000},
+	})
 	out := &strings.Builder{}
 	stderr := &strings.Builder{}
 	ctx := &cli.Ctx{Stdout: out, Stderr: stderr, GlobalFlags: cli.GlobalFlags{Host: "git.example.com", Owner: "o", Repo: "r"}, Repo: repo, Cfg: &config.Config{Defaults: config.Defaults{Base: "main"}}}
@@ -119,16 +195,49 @@ func TestBatchSkippedEmptySubject(t *testing.T) {
 	if !strings.Contains(stderr.String(), "skipped: empty (no commit subject)\n") {
 		t.Fatalf("stderr = %q, want skipped line", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "skipped: main (already in base)\n") {
+		t.Fatalf("stderr = %q, want already-in-base line for main", stderr.String())
+	}
 	var items []BatchReceiptItem
 	if err := json.Unmarshal([]byte(out.String()), &items); err != nil {
 		t.Fatalf("plan JSON: %v", err)
 	}
-	var got []string
-	for _, it := range items {
-		got = append(got, it.Branch)
+	if len(items) != 1 || items[0].Branch != "good" {
+		t.Fatalf("items = %+v, want only good (skipped dropped)", items)
 	}
-	if len(got) != 2 || got[0] != "good" || got[1] != "main" {
-		t.Fatalf("items = %+v, want good then main (skipped dropped)", items)
+}
+
+func TestBatchAllSkippedExits2(t *testing.T) {
+	// Every matching branch is either contained in the resolved base
+	// (stale sits at main's tip, main is the base itself) or lacks a
+	// commit subject (empty). The empty-plan error must name both skip
+	// reasons and keep exit code 2.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"stale": {NoCommit: true},
+		"empty": {Subject: "", Date: 1700000000},
+	})
+	out := &strings.Builder{}
+	stderr := &strings.Builder{}
+	ctx := &cli.Ctx{Stdout: out, Stderr: stderr, GlobalFlags: cli.GlobalFlags{Host: "git.example.com", Owner: "o", Repo: "r"}, Repo: repo, Cfg: &config.Config{Defaults: config.Defaults{Base: "main"}}}
+	err := (createBatchCmd{}).Run([]string{"*"}, ctx)
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitUsage {
+		t.Fatalf("want ExitUsage, got %v", err)
+	}
+	if cerr.Msg != "all matching branches already contained in base or lack commit subjects" {
+		t.Fatalf("Msg = %q", cerr.Msg)
+	}
+	for _, want := range []string{
+		"skipped: empty (no commit subject)\n",
+		"skipped: main (already in base)\n",
+		"skipped: stale (already in base)\n",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+	if out.String() != "" {
+		t.Fatalf("stdout = %q, want empty plan", out.String())
 	}
 }
 
@@ -216,7 +325,11 @@ func batchPostServer(t *testing.T, post func(n int, w http.ResponseWriter, r *ht
 }
 
 func TestBatchYesStopsOnFirstFailure(t *testing.T) {
-	repo := batchRepo(t, map[string]string{"b1": "one", "b2": "two", "b3": "three"})
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"b1": {Subject: "one", Date: 1700000000},
+		"b2": {Subject: "two", Date: 1700000000},
+		"b3": {Subject: "three", Date: 1700000000},
+	})
 	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
 		if n == 3 {
 			w.WriteHeader(422)
@@ -305,7 +418,10 @@ func TestBatchYesStatelessSecondRun(t *testing.T) {
 }
 
 func TestBatchYesAllSucceed(t *testing.T) {
-	repo := batchRepo(t, map[string]string{"b1": "one", "b2": "two"})
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"b1": {Subject: "one", Date: 1700000000},
+		"b2": {Subject: "two", Date: 1700000000},
+	})
 	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"number":%d,"html_url":"https://git.example.com/o/r/pull/%d"}`, n, n)
 	})

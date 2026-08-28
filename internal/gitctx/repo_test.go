@@ -3,6 +3,7 @@ package gitctx
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,107 @@ func TestCommitSubjectMissingRefIsEmpty(t *testing.T) {
 
 	if got := CommitSubject(dir, "no-such-ref"); got != "" {
 		t.Errorf("CommitSubject of missing ref = %q, want \"\"", got)
+	}
+}
+
+func TestBranchTipDate(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("checkout", "-b", "topic")
+	if err := os.WriteFile(dir+"/file.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "tip commit")
+
+	cmd := exec.Command("git", "log", "-1", "--format=%ct", "topic")
+	cmd.Dir = dir
+	wantOut, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git log committerdate: %v", err)
+	}
+	want, err := strconv.ParseInt(strings.TrimSpace(string(wantOut)), 10, 64)
+	if err != nil {
+		t.Fatalf("parsing committer date %q: %v", wantOut, err)
+	}
+
+	if got := BranchTipDate(dir, "topic"); got != want {
+		t.Errorf("BranchTipDate = %d, want %d", got, want)
+	}
+}
+
+func TestBranchTipDateMissingRefIsZero(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if got := BranchTipDate(dir, "no-such-ref"); got != 0 {
+		t.Errorf("BranchTipDate of missing ref = %d, want 0", got)
+	}
+}
+
+func TestIsAncestor(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	base := CurrentBranch(dir)
+	run("checkout", "-b", "descendant")
+	if err := os.WriteFile(dir+"/f.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "on descendant")
+
+	// Equal refs count as ancestors.
+	ok, err := IsAncestor(dir, base, base)
+	if err != nil {
+		t.Fatalf("IsAncestor(ref, ref): %v", err)
+	}
+	if !ok {
+		t.Error("IsAncestor(ref, ref) = false, want true")
+	}
+
+	// Base is an ancestor of the descendant.
+	ok, err = IsAncestor(dir, base, "descendant")
+	if err != nil {
+		t.Fatalf("IsAncestor(base, descendant): %v", err)
+	}
+	if !ok {
+		t.Error("IsAncestor(base, descendant) = false, want true")
+	}
+
+	// The descendant is not an ancestor of the base.
+	ok, err = IsAncestor(dir, "descendant", base)
+	if err != nil {
+		t.Fatalf("IsAncestor(descendant, base): %v", err)
+	}
+	if ok {
+		t.Error("IsAncestor(descendant, base) = true, want false")
+	}
+}
+
+func TestIsAncestorMissingRefErrors(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	_, err := IsAncestor(dir, "no-such-ref", "HEAD")
+	if err == nil {
+		t.Fatal("IsAncestor with missing ref: want error, got nil")
+	}
+	if want := "git merge-base: not a valid commit name no-such-ref"; !strings.HasPrefix(err.Error(), "git merge-base: ") {
+		t.Errorf("error = %q, want prefix %q", err.Error(), want)
+	}
+}
+
+func TestIsAncestorOutsideRepoErrors(t *testing.T) {
+	_, err := IsAncestor(t.TempDir(), "HEAD", "HEAD")
+	if err == nil {
+		t.Fatal("IsAncestor outside a repository: want error, got nil")
+	}
+	if want := "not inside a git repository"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
 

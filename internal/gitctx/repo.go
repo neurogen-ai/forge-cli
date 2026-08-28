@@ -58,6 +58,24 @@ func CommitSubject(root, ref string) string {
 	return out
 }
 
+// BranchTipDate returns the branch tip's committer date as unix seconds
+// (the age lazygit shows). Returns 0 when ref does not resolve; callers
+// treat 0 as oldest.
+func BranchTipDate(root, ref string) int64 {
+	// %ct is committer date as unix seconds; %(committerdate:unix) is not a
+	// git log pretty format (it is for-each-ref syntax) and yields the same
+	// value here.
+	out, err := git(root, "log", "-1", "--format=%ct", ref)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(out, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // UniqueCommitCount returns how many commits HEAD-side has that base-side
 // lacks (`git rev-list --count base..head`). Error when either ref does not
 // resolve; the caller owns deciding what "missing base" means.
@@ -90,6 +108,31 @@ func RemoteHead(root string) string {
 	// symbolic-ref --short yields "origin/main"; strip the remote prefix.
 	_, branch, _ := strings.Cut(out, "/")
 	return branch
+}
+
+// IsAncestor reports whether git considers ancestor an ancestor of ref.
+// Equal refs count as ancestors, git's convention. Exit 1 means "not an
+// ancestor", not an error; other failures return the gitctx error contract
+// ("not inside a git repository", or "git merge-base: <stderr>").
+func IsAncestor(root, ancestor, ref string) (bool, error) {
+	// Runs directly instead of through git(): exit code 1 means "not an
+	// ancestor", which git() would map to the error contract.
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, ref)
+	cmd.Dir = root
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" || strings.Contains(msg, "not a git repository") {
+		return false, fmt.Errorf("not inside a git repository")
+	}
+	return false, fmt.Errorf("git merge-base: %s", msg)
 }
 
 // git runs git in dir and returns trimmed stdout. A failed command whose
