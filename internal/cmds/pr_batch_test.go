@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"forge/internal/cli"
 	"forge/internal/config"
@@ -330,14 +331,19 @@ func TestBatchYesStopsOnFirstFailure(t *testing.T) {
 		"b2": {Subject: "two", Date: 1700000000},
 		"b3": {Subject: "three", Date: 1700000000},
 	})
+	// html_url points at the test server so the page-availability probe hits
+	// the handler's 200 fallback instead of the network. The prefix is filled
+	// in after the server starts.
+	var htmlURLPrefix string
 	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
 		if n == 3 {
 			w.WriteHeader(422)
 			fmt.Fprint(w, `{"message":"validation failed"}`)
 			return
 		}
-		fmt.Fprintf(w, `{"number":%d,"html_url":"https://git.example.com/o/r/pull/%d"}`, 100+n, 100+n)
+		fmt.Fprintf(w, `{"number":%d,"html_url":%q}`, 100+n, htmlURLPrefix+fmt.Sprintf("/o/r/pull/%d", 100+n))
 	})
+	htmlURLPrefix = ts.URL
 	defer ts.Close()
 	ctx := testCtx(ts)
 	ctx.Repo = repo
@@ -356,10 +362,10 @@ func TestBatchYesStopsOnFirstFailure(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("items = %+v, want 3 (partial receipt includes the failure)", items)
 	}
-	if items[0].Number != 101 || items[0].URL != "https://git.example.com/o/r/pull/101" || items[0].Error != "" {
+	if items[0].Number != 101 || items[0].URL != ts.URL+"/o/r/pull/101" || items[0].Error != "" {
 		t.Fatalf("items[0] = %+v", items[0])
 	}
-	if items[1].Number != 102 || items[1].URL != "https://git.example.com/o/r/pull/102" || items[1].Error != "" {
+	if items[1].Number != 102 || items[1].URL != ts.URL+"/o/r/pull/102" || items[1].Error != "" {
 		t.Fatalf("items[1] = %+v", items[1])
 	}
 	if items[2].Error != "validation failed" {
@@ -396,9 +402,11 @@ func TestBatchYesFailsOnFirstPost(t *testing.T) {
 func TestBatchYesStatelessSecondRun(t *testing.T) {
 	repo := batchRepo(t, map[string]string{"b1": "one"})
 	run := func() {
+		var htmlURLPrefix string
 		ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, `{"number":7,"html_url":"https://git.example.com/o/r/pull/7"}`)
+			fmt.Fprintf(w, `{"number":7,"html_url":%q}`, htmlURLPrefix+"/o/r/pull/7")
 		})
+		htmlURLPrefix = ts.URL
 		defer ts.Close()
 		ctx := testCtx(ts)
 		ctx.Repo = repo
@@ -422,9 +430,11 @@ func TestBatchYesAllSucceed(t *testing.T) {
 		"b1": {Subject: "one", Date: 1700000000},
 		"b2": {Subject: "two", Date: 1700000000},
 	})
+	var htmlURLPrefix string
 	ts := batchPostServer(t, func(n int, w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"number":%d,"html_url":"https://git.example.com/o/r/pull/%d"}`, n, n)
+		fmt.Fprintf(w, `{"number":%d,"html_url":%q}`, n, htmlURLPrefix+fmt.Sprintf("/o/r/pull/%d", n))
 	})
+	htmlURLPrefix = ts.URL
 	defer ts.Close()
 	ctx := testCtx(ts)
 	ctx.Repo = repo
@@ -450,5 +460,112 @@ func TestBatchYesAllSucceed(t *testing.T) {
 		if _, ok := raw[i]["error"]; ok {
 			t.Errorf("raw[%d] has unexpected \"error\" key", i)
 		}
+	}
+}
+
+// ---- pollPRPage ----
+
+// countingPageServer returns a server counting GETs and serving the given
+// status sequence (last value repeats).
+func countingPageServer(t *testing.T, statuses ...int) (*httptest.Server, func() int) {
+	t.Helper()
+	n := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n++
+		status := statuses[len(statuses)-1]
+		if n <= len(statuses) {
+			status = statuses[n-1]
+		}
+		w.WriteHeader(status)
+	}))
+	return ts, func() int { return n }
+}
+
+func TestPollPRPageReadyAfterNAttempts(t *testing.T) {
+	ts, count := countingPageServer(t, 500, 500, 200)
+	defer ts.Close()
+	if !pollPRPage(ts.Client(), ts.URL, 5, time.Millisecond) {
+		t.Fatal("want ready=true once a status < 400 arrives")
+	}
+	if got := count(); got != 3 {
+		t.Fatalf("GETs = %d, want 3 (stops as soon as ready)", got)
+	}
+}
+
+func TestPollPRPageNeverReady(t *testing.T) {
+	ts, count := countingPageServer(t, 404, 404, 404)
+	defer ts.Close()
+	if pollPRPage(ts.Client(), ts.URL, 3, time.Millisecond) {
+		t.Fatal("want ready=false when every status is >= 400")
+	}
+	if got := count(); got != 3 {
+		t.Fatalf("GETs = %d, want 3 (bounded by attempts)", got)
+	}
+}
+
+func TestPollPRPageTransportErrorIsNotReady(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	ts.Close() // shut down immediately: every GET is a transport error
+	if pollPRPage(ts.Client(), ts.URL, 2, time.Millisecond) {
+		t.Fatal("want ready=false on transport errors")
+	}
+}
+
+func TestPollPRPageRespectsAttemptsAndDelay(t *testing.T) {
+	ts, count := countingPageServer(t, 404, 404, 200)
+	defer ts.Close()
+	start := time.Now()
+	ok := pollPRPage(ts.Client(), ts.URL, 3, 25*time.Millisecond)
+	elapsed := time.Since(start)
+	if !ok {
+		t.Fatal("want ready=true once a status < 400 arrives")
+	}
+	if got := count(); got != 3 {
+		t.Fatalf("GETs = %d, want 3", got)
+	}
+	// attempts-1 = 2 sleeps of 25ms between attempts; the first GET is
+	// immediate. Generous upper bound to absorb scheduler noise.
+	if elapsed < 40*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("elapsed = %s, want >= ~50ms of delay and well under the 500ms default", elapsed)
+	}
+}
+
+// TestBatchYesNotesWhenPageNeverAvailable uses a POST handler whose
+// html_url resolves to a permanently 503 path, so the probe exhausts its
+// attempts and the loop must print the note and keep going (release doc
+// §2: timeout is not an error).
+func TestBatchYesNotesWhenPageNeverAvailable(t *testing.T) {
+	repo := batchRepo(t, map[string]string{"b1": "one"})
+	var htmlURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls") {
+			fmt.Fprintf(w, `{"number":1,"html_url":%q}`, htmlURL)
+			return
+		}
+		if r.URL.Path == "/unavailable" {
+			w.WriteHeader(503)
+			return
+		}
+		fmt.Fprint(w, `{"default_branch":"main"}`)
+	}))
+	htmlURL = ts.URL + "/unavailable"
+	defer ts.Close()
+	origAttempts, origDelay := pagePollAttempts, pagePollDelay
+	pagePollAttempts, pagePollDelay = 2, time.Millisecond
+	defer func() { pagePollAttempts, pagePollDelay = origAttempts, origDelay }()
+	ctx := testCtx(ts)
+	ctx.Repo = repo
+	if err := (createBatchCmd{}).Run([]string{"--yes", "--base", "main", "b*"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if want := "note: b1 page not confirmed available before continuing\n"; !strings.Contains(ctx.Stderr.(*bytes.Buffer).String(), want) {
+		t.Fatalf("stderr = %q, want %q", ctx.Stderr.(*bytes.Buffer).String(), want)
+	}
+	var items []BatchReceiptItem
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &items); err != nil {
+		t.Fatalf("receipt JSON: %v", err)
+	}
+	if len(items) != 1 || items[0].Number != 1 || items[0].Error != "" {
+		t.Fatalf("items = %+v, want one successful item (timeout is not a failure)", items)
 	}
 }
