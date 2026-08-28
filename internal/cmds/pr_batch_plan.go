@@ -25,6 +25,17 @@ func planBatchBranches(root string, matched []string, base string) (items []Batc
 			notes = append(notes, fmt.Sprintf("skipped: %s (no commit subject)", branch))
 			continue
 		}
+		// Local containment preflight (release v0.4.1 §2): a tip already
+		// contained in the resolved base would open a PR with an empty
+		// diff, so it is skipped before any POST. UniqueCommitCount == 0
+		// means contained; IsAncestor confirms. Either lookup failing
+		// leaves the check inconclusive and the branch in the plan.
+		if n, err := gitctx.UniqueCommitCount(root, base, branch); err == nil && n == 0 {
+			if anc, aerr := gitctx.IsAncestor(root, branch, base); aerr == nil && anc {
+				notes = append(notes, fmt.Sprintf("skipped: %s (already in base)", branch))
+				continue
+			}
+		}
 		cands = append(cands, cand{
 			item: BatchReceiptItem{Branch: branch, Title: title, Base: base},
 			date: gitctx.BranchTipDate(root, branch),

@@ -27,6 +27,9 @@ type batchBranch struct {
 	// starts from; empty means main. Stacked branches set From to their
 	// parent so ancestry tie-breaks are testable.
 	From string
+	// NoCommit creates the branch without a tip commit, so its tip
+	// equals its branch point (usually main) and is contained in main.
+	NoCommit bool
 }
 
 // batchRepoDated creates a temp git repo with the named branches, each
@@ -74,6 +77,11 @@ func batchRepoDated(t *testing.T, branches map[string]batchBranch) *gitctx.Repo 
 			}
 			run("checkout", "-q", "-b", branch, start)
 			cmd := exec.Command("git", "commit", "--allow-empty", "--allow-empty-message", "-m", spec.Subject)
+			if spec.NoCommit {
+				delete(pending, branch)
+				progress = true
+				continue
+			}
 			if spec.Date != 0 {
 				d := fmt.Sprintf("@%d +0000", spec.Date)
 				cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+d, "GIT_COMMITTER_DATE="+d)
@@ -172,7 +180,8 @@ func TestBatchPlanSortedLexically(t *testing.T) {
 
 func TestBatchSkippedEmptySubject(t *testing.T) {
 	// Pinned in the past so both branch tips sort before main's natural
-	// (now) init commit deterministically.
+	// (now) init commit deterministically. Pattern "*" also matches main,
+	// whose tip is the base itself: contained, hence the second note.
 	repo := batchRepoDated(t, map[string]batchBranch{
 		"empty": {Subject: "", Date: 1700000000},
 		"good":  {Subject: "real title", Date: 1700000000},
@@ -186,16 +195,49 @@ func TestBatchSkippedEmptySubject(t *testing.T) {
 	if !strings.Contains(stderr.String(), "skipped: empty (no commit subject)\n") {
 		t.Fatalf("stderr = %q, want skipped line", stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "skipped: main (already in base)\n") {
+		t.Fatalf("stderr = %q, want already-in-base line for main", stderr.String())
+	}
 	var items []BatchReceiptItem
 	if err := json.Unmarshal([]byte(out.String()), &items); err != nil {
 		t.Fatalf("plan JSON: %v", err)
 	}
-	var got []string
-	for _, it := range items {
-		got = append(got, it.Branch)
+	if len(items) != 1 || items[0].Branch != "good" {
+		t.Fatalf("items = %+v, want only good (skipped dropped)", items)
 	}
-	if len(got) != 2 || got[0] != "good" || got[1] != "main" {
-		t.Fatalf("items = %+v, want good then main (skipped dropped)", items)
+}
+
+func TestBatchAllSkippedExits2(t *testing.T) {
+	// Every matching branch is either contained in the resolved base
+	// (stale sits at main's tip, main is the base itself) or lacks a
+	// commit subject (empty). The empty-plan error must name both skip
+	// reasons and keep exit code 2.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"stale": {NoCommit: true},
+		"empty": {Subject: "", Date: 1700000000},
+	})
+	out := &strings.Builder{}
+	stderr := &strings.Builder{}
+	ctx := &cli.Ctx{Stdout: out, Stderr: stderr, GlobalFlags: cli.GlobalFlags{Host: "git.example.com", Owner: "o", Repo: "r"}, Repo: repo, Cfg: &config.Config{Defaults: config.Defaults{Base: "main"}}}
+	err := (createBatchCmd{}).Run([]string{"*"}, ctx)
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitUsage {
+		t.Fatalf("want ExitUsage, got %v", err)
+	}
+	if cerr.Msg != "all matching branches already contained in base or lack commit subjects" {
+		t.Fatalf("Msg = %q", cerr.Msg)
+	}
+	for _, want := range []string{
+		"skipped: empty (no commit subject)\n",
+		"skipped: main (already in base)\n",
+		"skipped: stale (already in base)\n",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+	if out.String() != "" {
+		t.Fatalf("stdout = %q, want empty plan", out.String())
 	}
 }
 

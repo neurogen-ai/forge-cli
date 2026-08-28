@@ -94,6 +94,44 @@ func TestPlanBatchSkipsEmptySubjectWithNote(t *testing.T) {
 	}
 }
 
+func TestPlanBatchSkipsContainedInBase(t *testing.T) {
+	// stale sits at main's tip (NoCommit), so UniqueCommitCount(main..stale)
+	// is 0 and it is skipped locally, before any POST. merged carries a new
+	// commit and stays in the plan.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"stale":  {NoCommit: true},
+		"merged": {Subject: "merged work", Date: 1700000000},
+	})
+	items, notes := planBatchBranches(repo.Root, []string{"stale", "merged"}, "main")
+	if len(notes) != 1 || notes[0] != "skipped: stale (already in base)" {
+		t.Fatalf("notes = %q, want exactly one already-in-base note", notes)
+	}
+	if len(items) != 1 || items[0].Branch != "merged" {
+		t.Fatalf("items = %+v, want only merged", items)
+	}
+}
+
+func TestPlanBatchUnresolvableBaseKeepsBranches(t *testing.T) {
+	// A base that does not resolve makes the containment check fail
+	// (inconclusive), which degrades to keeping the branch in the plan
+	// rather than erroring or skipping.
+	repo := batchRepoDated(t, map[string]batchBranch{
+		"stale":  {NoCommit: true},
+		"merged": {Subject: "merged work", Date: 1700000000},
+	})
+	items, notes := planBatchBranches(repo.Root, []string{"stale", "merged"}, "no-such-base")
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none", notes)
+	}
+	var got []string
+	for _, it := range items {
+		got = append(got, it.Branch)
+	}
+	if len(got) != 2 || got[0] != "merged" || got[1] != "stale" {
+		t.Fatalf("items = %v, want both branches kept (merged first: stale's tip is main's now-dated init commit)", got)
+	}
+}
+
 func TestPlanBatchUnresolvableRefDegradesToNote(t *testing.T) {
 	// An unresolvable branch name degrades to "" subject and 0 date, so
 	// it surfaces as a skip note rather than an error, and the remaining
