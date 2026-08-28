@@ -166,6 +166,70 @@ func TestBranchTipDateMissingRefIsZero(t *testing.T) {
 	}
 }
 
+func TestIsAncestor(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	base := CurrentBranch(dir)
+	run("checkout", "-b", "descendant")
+	if err := os.WriteFile(dir+"/f.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "on descendant")
+
+	// Equal refs count as ancestors.
+	ok, err := IsAncestor(dir, base, base)
+	if err != nil {
+		t.Fatalf("IsAncestor(ref, ref): %v", err)
+	}
+	if !ok {
+		t.Error("IsAncestor(ref, ref) = false, want true")
+	}
+
+	// Base is an ancestor of the descendant.
+	ok, err = IsAncestor(dir, base, "descendant")
+	if err != nil {
+		t.Fatalf("IsAncestor(base, descendant): %v", err)
+	}
+	if !ok {
+		t.Error("IsAncestor(base, descendant) = false, want true")
+	}
+
+	// The descendant is not an ancestor of the base.
+	ok, err = IsAncestor(dir, "descendant", base)
+	if err != nil {
+		t.Fatalf("IsAncestor(descendant, base): %v", err)
+	}
+	if ok {
+		t.Error("IsAncestor(descendant, base) = true, want false")
+	}
+}
+
+func TestIsAncestorMissingRefErrors(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	_, err := IsAncestor(dir, "no-such-ref", "HEAD")
+	if err == nil {
+		t.Fatal("IsAncestor with missing ref: want error, got nil")
+	}
+	if want := "git merge-base: not a valid commit name no-such-ref"; !strings.HasPrefix(err.Error(), "git merge-base: ") {
+		t.Errorf("error = %q, want prefix %q", err.Error(), want)
+	}
+}
+
+func TestIsAncestorOutsideRepoErrors(t *testing.T) {
+	_, err := IsAncestor(t.TempDir(), "HEAD", "HEAD")
+	if err == nil {
+		t.Fatal("IsAncestor outside a repository: want error, got nil")
+	}
+	if want := "not inside a git repository"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestUniqueCommitCount(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir, "")

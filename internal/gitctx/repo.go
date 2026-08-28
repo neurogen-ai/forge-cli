@@ -110,6 +110,31 @@ func RemoteHead(root string) string {
 	return branch
 }
 
+// IsAncestor reports whether git considers ancestor an ancestor of ref.
+// Equal refs count as ancestors, git's convention. Exit 1 means "not an
+// ancestor", not an error; other failures return the gitctx error contract
+// ("not inside a git repository", or "git merge-base: <stderr>").
+func IsAncestor(root, ancestor, ref string) (bool, error) {
+	// Runs directly instead of through git(): exit code 1 means "not an
+	// ancestor", which git() would map to the error contract.
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, ref)
+	cmd.Dir = root
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" || strings.Contains(msg, "not a git repository") {
+		return false, fmt.Errorf("not inside a git repository")
+	}
+	return false, fmt.Errorf("git merge-base: %s", msg)
+}
+
 // git runs git in dir and returns trimmed stdout. A failed command whose
 // stderr mentions "not a git repository" becomes the Detect error contract;
 // other failures keep their stderr detail.
