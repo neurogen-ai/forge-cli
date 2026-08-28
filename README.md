@@ -204,7 +204,7 @@ hidden:
 ```
 
 Future work, not shipped: the `forge api` passthrough and `forge search`
-(v0.5.0) and an auto-sync service (v0.6.0) — see `plans/releases/`.
+(v0.5.0) and an auto-sync service (v0.8.0) — see `plans/releases/`.
 
 ### Resolution
 
