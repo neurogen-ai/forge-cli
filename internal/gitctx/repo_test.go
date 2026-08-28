@@ -3,6 +3,7 @@ package gitctx
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,43 @@ func TestCommitSubjectMissingRefIsEmpty(t *testing.T) {
 
 	if got := CommitSubject(dir, "no-such-ref"); got != "" {
 		t.Errorf("CommitSubject of missing ref = %q, want \"\"", got)
+	}
+}
+
+func TestBranchTipDate(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	run := gitRunner(t, dir)
+	run("checkout", "-b", "topic")
+	if err := os.WriteFile(dir+"/file.txt", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "tip commit")
+
+	cmd := exec.Command("git", "log", "-1", "--format=%ct", "topic")
+	cmd.Dir = dir
+	wantOut, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git log committerdate: %v", err)
+	}
+	want, err := strconv.ParseInt(strings.TrimSpace(string(wantOut)), 10, 64)
+	if err != nil {
+		t.Fatalf("parsing committer date %q: %v", wantOut, err)
+	}
+
+	if got := BranchTipDate(dir, "topic"); got != want {
+		t.Errorf("BranchTipDate = %d, want %d", got, want)
+	}
+}
+
+func TestBranchTipDateMissingRefIsZero(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+
+	if got := BranchTipDate(dir, "no-such-ref"); got != 0 {
+		t.Errorf("BranchTipDate of missing ref = %d, want 0", got)
 	}
 }
 

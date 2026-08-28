@@ -58,6 +58,24 @@ func CommitSubject(root, ref string) string {
 	return out
 }
 
+// BranchTipDate returns the branch tip's committer date as unix seconds
+// (the age lazygit shows). Returns 0 when ref does not resolve; callers
+// treat 0 as oldest.
+func BranchTipDate(root, ref string) int64 {
+	// %ct is committer date as unix seconds; %(committerdate:unix) is not a
+	// git log pretty format (it is for-each-ref syntax) and yields the same
+	// value here.
+	out, err := git(root, "log", "-1", "--format=%ct", ref)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(out, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // UniqueCommitCount returns how many commits HEAD-side has that base-side
 // lacks (`git rev-list --count base..head`). Error when either ref does not
 // resolve; the caller owns deciding what "missing base" means.
