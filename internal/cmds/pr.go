@@ -212,6 +212,7 @@ func PRCommands() []cli.Command {
 		resolveAllCmd{},
 		commentAddCmd{kind: "pr"},
 		prStateCmd{action: "close"}, prStateCmd{action: "reopen"}, prStateCmd{action: "ready"},
+		prDiffCmd{},
 		deprecatedPrConvCmd{},
 	}
 }

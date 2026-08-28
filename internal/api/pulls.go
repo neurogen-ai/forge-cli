@@ -97,6 +97,13 @@ func (c *Client) GetReviewComments(owner, repo string, index, reviewID int) ([]R
 	return List[ReviewComment](c, path, url.Values{})
 }
 
+// GetPullDiff fetches the raw .diff or .patch representation of a PR.
+// format is selected by the command and is exactly "diff" or "patch".
+func (c *Client) GetPullDiff(owner, repo string, index int, format string) (*RawResponse, error) {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d.%s", owner, repo, index, format)
+	return c.DoRaw("GET", path, nil, nil)
+}
+
 // Thread-resolution encoding pinned by decision D2. The probe script at
 // scripts/probe-v0.3.0.sh verifies this shape against a live instance; a
 // mismatch means editing exactly this block plus TestThreadResolution.

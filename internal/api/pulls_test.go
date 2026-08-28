@@ -446,3 +446,38 @@ func TestSetPRDraftAPIError(t *testing.T) {
 		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
+
+func TestGetPullDiff(t *testing.T) {
+	for _, tc := range []struct{ format, path, contentType string }{
+		{"diff", "/api/v1/repos/o/r/pulls/5.diff", "text/plain; charset=utf-8"},
+		{"patch", "/api/v1/repos/o/r/pulls/5.patch", "text/x-patch"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			const body = "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n"
+			var gotMethod, gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Write([]byte(body))
+			}))
+			defer ts.Close()
+
+			raw, err := newTestClient(ts).GetPullDiff("o", "r", 5, tc.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotMethod != "GET" || gotPath != tc.path {
+				t.Errorf("got %s %s", gotMethod, gotPath)
+			}
+			if raw.Status != 200 {
+				t.Errorf("Status = %d, want 200", raw.Status)
+			}
+			if raw.ContentType != tc.contentType {
+				t.Errorf("ContentType = %q, want %q", raw.ContentType, tc.contentType)
+			}
+			if string(raw.Body) != body {
+				t.Errorf("Body = %q, want exact bytes", raw.Body)
+			}
+		})
+	}
+}
