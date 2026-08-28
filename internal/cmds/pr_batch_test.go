@@ -23,6 +23,10 @@ type batchBranch struct {
 	// seconds ("@<unix>"), so ordering assertions are deterministic
 	// across second boundaries. 0 leaves the commit's natural date.
 	Date int64
+	// From is the branch point (existing branch or ref) the new branch
+	// starts from; empty means main. Stacked branches set From to their
+	// parent so ancestry tie-breaks are testable.
+	From string
 }
 
 // batchRepoDated creates a temp git repo with the named branches, each
@@ -47,21 +51,42 @@ func batchRepoDated(t *testing.T, branches map[string]batchBranch) *gitctx.Repo 
 		run(args...)
 	}
 	run("commit", "--allow-empty", "-m", "init")
+	// Process specs after their From branch exists; map iteration order is
+	// random, so stacked branches need dependency-aware ordering.
+	pending := make(map[string]batchBranch, len(branches))
 	for branch, spec := range branches {
-		run("branch", branch)
-		cmd := exec.Command("git", "checkout", "-q", branch)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git checkout %s: %v: %s", branch, err, out)
+		pending[branch] = spec
+	}
+	for len(pending) > 0 {
+		progress := false
+		for branch, spec := range pending {
+			start := spec.From
+			if start == "" {
+				start = "main"
+			}
+			if start != "main" {
+				if _, ok := branches[start]; !ok && start != "HEAD" {
+					continue
+				}
+				if _, ok := pending[start]; ok {
+					continue
+				}
+			}
+			run("checkout", "-q", "-b", branch, start)
+			cmd := exec.Command("git", "commit", "--allow-empty", "--allow-empty-message", "-m", spec.Subject)
+			if spec.Date != 0 {
+				d := fmt.Sprintf("@%d +0000", spec.Date)
+				cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+d, "GIT_COMMITTER_DATE="+d)
+			}
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git commit on %s: %v: %s", branch, err, out)
+			}
+			delete(pending, branch)
+			progress = true
 		}
-		cmd = exec.Command("git", "commit", "--allow-empty", "--allow-empty-message", "-m", spec.Subject)
-		if spec.Date != 0 {
-			d := fmt.Sprintf("@%d +0000", spec.Date)
-			cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+d, "GIT_COMMITTER_DATE="+d)
-		}
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git commit on %s: %v: %s", branch, err, out)
+		if !progress {
+			t.Fatalf("unresolvable From chain in branches %v", pending)
 		}
 	}
 	cmd := exec.Command("git", "checkout", "-q", "main")

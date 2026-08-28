@@ -124,14 +124,9 @@ func (createBatchCmd) Run(args []string, ctx *cli.Ctx) error {
 		return err
 	}
 
-	items := []BatchReceiptItem{}
-	for _, branch := range matched {
-		title := gitctx.CommitSubject(ctx.Repo.Root, branch)
-		if title == "" {
-			fmt.Fprintf(ctx.Stderr, "skipped: %s (no commit subject)\n", branch)
-			continue
-		}
-		items = append(items, BatchReceiptItem{Branch: branch, Title: title, Base: d.Base})
+	items, notes := planBatchBranches(ctx.Repo.Root, matched, d.Base)
+	for _, note := range notes {
+		fmt.Fprintln(ctx.Stderr, note)
 	}
 	if len(items) == 0 {
 		return &cli.Error{
