@@ -128,3 +128,26 @@ func (c *Client) setThreadResolution(owner, repo string, commentID int64, resolv
 	}{resolved}
 	return c.Do(threadResolutionMethod, path, nil, body, nil)
 }
+
+// MergeInput is the Forgejo merge request body. The capitalized JSON field
+// names are part of the Forgejo API contract. Strategy values are lower-case
+// "merge", "squash", and "rebase"; CLI validation lives in internal/cmds.
+type MergeInput struct {
+	Do                string `json:"Do"`
+	MergeTitleField   string `json:"MergeTitleField,omitempty"`
+	MergeMessageField string `json:"MergeMessageField,omitempty"`
+}
+
+// MergePull submits one merge request. A successful response body is ignored;
+// the caller owns any post-merge cleanup.
+func (c *Client) MergePull(owner, repo string, index int, in MergeInput) error {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, index)
+	return c.Do("POST", path, nil, in, nil)
+}
+
+// DeleteRef deletes a branch name below refs/heads after a successful merge.
+// ref is the server-provided branch name, not a locally guessed one.
+func (c *Client) DeleteRef(owner, repo, ref string) error {
+	path := fmt.Sprintf("/repos/%s/%s/git/refs/heads/%s", owner, repo, ref)
+	return c.Do("DELETE", path, nil, nil, nil)
+}

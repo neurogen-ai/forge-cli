@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -479,5 +480,90 @@ func TestGetPullDiff(t *testing.T) {
 				t.Errorf("Body = %q, want exact bytes", raw.Body)
 			}
 		})
+	}
+}
+
+func TestMergePullStrategies(t *testing.T) {
+	cases := []struct{ do string }{{"merge"}, {"squash"}, {"rebase"}}
+	for _, tc := range cases {
+		t.Run(tc.do, func(t *testing.T) {
+			var gotMethod, gotPath, gotBody string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				raw, _ := io.ReadAll(r.Body)
+				gotBody = string(raw)
+				w.WriteHeader(200)
+			}))
+			defer ts.Close()
+
+			err := newTestClient(ts).MergePull("o", "r", 5, MergeInput{Do: tc.do})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/5/merge" {
+				t.Errorf("got %s %s", gotMethod, gotPath)
+			}
+			if gotBody != fmt.Sprintf(`{"Do":%q}`, tc.do) {
+				t.Errorf("body = %q, want only Do", gotBody)
+			}
+		})
+	}
+}
+
+func TestMergePullOptionalFields(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		// Forgejo returns 204 with an empty body on a successful merge.
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	in := MergeInput{Do: "merge", MergeTitleField: "t", MergeMessageField: "m"}
+	if err := newTestClient(ts).MergePull("o", "r", 5, in); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"Do":"merge","MergeTitleField":"t","MergeMessageField":"m"}`
+	if gotBody != want {
+		t.Errorf("body = %q, want %q", gotBody, want)
+	}
+}
+
+func TestMergePullNon2xx(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+		w.Write([]byte(`{"message":"pull request is conflicted"}`))
+	}))
+	defer ts.Close()
+
+	err := newTestClient(ts).MergePull("o", "r", 5, MergeInput{Do: "merge"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	if apiErr.Status != 409 || apiErr.Message != "pull request is conflicted" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestDeleteRef(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).DeleteRef("o", "r", "feature-branch"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" || gotPath != "/api/v1/repos/o/r/git/refs/heads/feature-branch" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != "" {
+		t.Errorf("body = %q, want no body", gotBody)
 	}
 }
