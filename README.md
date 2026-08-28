@@ -180,7 +180,7 @@ received — no trailing newline, no JSON wrapper. `--patch` selects the
 receipt instead of the diff:
 
 ```json
-{"path": ".forge/cache/prs/o-r-42.diff", "bytes": 1873}
+{"path": "/abs/path/to/repo/.forge/cache/prs/r-42.diff", "bytes": 1873}
 ```
 
 Nothing is cached without `--out`; stdout requests write no files.
