@@ -158,5 +158,6 @@ func IssueCommands() []cli.Command {
 		issueStateCmd{closing: true}, issueStateCmd{closing: false},
 		commentAddCmd{kind: "issue"},
 		editCmd{kind: "issue"},
+		browseCmd{kind: "issue"},
 	}
 }
