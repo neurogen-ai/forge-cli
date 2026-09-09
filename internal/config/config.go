@@ -30,8 +30,9 @@ type Config struct {
 // different location stays available purely through [savedir] config
 // entries (e.g. the v0.2.0 XDG state-dir layout), which win per-key.
 const (
-	defaultSavedirPR    = ".forge/cache/prs"
-	defaultSavedirIssue = ".forge/cache/issues"
+	defaultSavedirPR      = ".forge/cache/prs"
+	defaultSavedirIssue   = ".forge/cache/issues"
+	defaultSavedirRelease = ".forge/cache/releases"
 )
 
 // Load reads the global and repo-local config files and merges them,
@@ -48,6 +49,7 @@ func Load(globalPath, localPath string, expandHome bool) (*Config, error) {
 		// so [savedir] overrides in either file win per-key.
 		"pr-conversation": defaultSavedirPR,
 		"issue":           defaultSavedirIssue,
+		"releases":        defaultSavedirRelease,
 	}}
 	cfg.TimeoutSeconds = 30
 	for _, path := range []string{globalPath, localPath} {

@@ -15,9 +15,10 @@ type Documented interface {
 // groupSummary maps a family prefix to the one-line description shown on its
 // group page and in top-level usage. New families add one entry here.
 var groupSummary = map[string]string{
-	"pr":    "pull requests",
-	"issue": "issues",
-	"cache": "local savedir maintenance",
+	"pr":      "pull requests",
+	"issue":   "issues",
+	"cache":   "local savedir maintenance",
+	"release": "releases and their assets",
 }
 
 // HelpText returns the command's help page. Fallback for non-Documented

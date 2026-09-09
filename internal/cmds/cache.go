@@ -44,13 +44,13 @@ func (cacheFlushCmd) Name() string { return "cache flush" }
 func (cacheFlushCmd) HelpPage() string {
 	return `use: forge cache flush [--yes]
 
-Delete cached JSON files in every configured savedir, printing each removed
+Delete cached files in every configured savedir, printing each removed
 path. Paths outside the repository root require --yes. Savedirs under
 forge's state directory (~/.local/state/forge) flush without --yes.`
 }
 
 func (cacheFlushCmd) Summary() string {
-	return "delete cached JSON files in every savedir [--yes for outside-root dirs]"
+	return "delete cached files in every savedir [--yes for outside-root dirs]"
 }
 func (cacheFlushCmd) RequiresAPI() bool { return false }
 

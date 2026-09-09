@@ -43,13 +43,8 @@ func (prDiffCmd) Run(args []string, ctx *cli.Ctx) error {
 	}
 
 	// --out resolves the [savedir] pr-conversation directory like pr pull.
-	dir := ""
-	if ctx.Cfg != nil {
-		if d, ok := ctx.Cfg.Savedirs["pr-conversation"]; ok && d != "" {
-			dir = d
-		}
-	}
-	if dir == "" {
+	dir, derr := resolveConfiguredSavedir(ctx, "pr-conversation")
+	if derr != nil {
 		return &cli.Error{
 			Code: cli.ExitUsage,
 			Msg:  "no savedir for pr-conversation",

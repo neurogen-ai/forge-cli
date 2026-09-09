@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -111,15 +112,20 @@ func (c *Client) DoRaw(method, path string, query url.Values, body []byte) (*Raw
 	return &RawResponse{Status: status, ContentType: contentType, Body: data}, nil
 }
 
-// send performs one authenticated request against <baseURL>/api/v1<path> and
-// reads the whole response body. It is the single transport seam shared by Do
-// and DoRaw: absolute URL construction, request body, Authorization header,
-// verbose log line, response close, body read, and non-2xx to *APIError
-// conversion. contentType is applied only when the request has a body; an
+// send performs one authenticated request against <baseURL>/api/v1<path>, or
+// against path itself when it is already an absolute http(s) URL. It is the
+// single transport seam shared by Do, DoRaw, and Download: URL construction,
+// request body, Authorization header, verbose log line, response close, body
+// read, and non-2xx to *APIError conversion. contentType is applied only when the request has a body; an
 // empty accept or contentType means the header is omitted. send returns the
 // response status, Content-Type, and body for a 2xx response.
 func (c *Client) send(method, path string, query url.Values, body io.Reader, contentType, accept string) (int, string, []byte, error) {
-	full := c.pageURL(path, query)
+	full := path
+	if !isAbsoluteURL(path) {
+		full = c.pageURL(path, query)
+	} else if len(query) > 0 {
+		full += "?" + query.Encode()
+	}
 
 	req, err := http.NewRequest(method, full, body)
 	if err != nil {
@@ -168,6 +174,36 @@ func apiErrorFrom(status int, body []byte) *APIError {
 		msg = decoded.Message
 	}
 	return &APIError{Status: status, Message: msg}
+}
+
+// isAbsoluteURL reports whether path is already an absolute http(s) URL
+// rather than an /api/v1 path relative to the client base.
+func isAbsoluteURL(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+}
+
+// Download fetches an absolute asset URL with the client's token and returns
+// its bytes. The URL must match the API base scheme, host, and port; the
+// check runs before the request, so an off-host URL never sees the token.
+// Non-2xx responses return *APIError; transport failures return an error for
+// which IsNetwork is true.
+func (c *Client) Download(assetURL string) ([]byte, error) {
+	u, err := url.Parse(assetURL)
+	if err != nil {
+		return nil, fmt.Errorf("api: parse asset url: %w", err)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("api: parse base url: %w", err)
+	}
+	if u.Scheme != base.Scheme || u.Host != base.Host {
+		return nil, fmt.Errorf("api: asset url host %q is not the API host %q; refusing to send credentials", u.Host, base.Host)
+	}
+	_, _, data, err := c.send(http.MethodGet, assetURL, nil, nil, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (c *Client) logf(format string, args ...any) {

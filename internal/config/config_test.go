@@ -77,6 +77,7 @@ func TestLoadMissingFiles(t *testing.T) {
 	for key, want := range map[string]string{
 		"pr-conversation": ".forge/cache/prs",
 		"issue":           ".forge/cache/issues",
+		"releases":        ".forge/cache/releases",
 	} {
 		if got := cfg.Savedirs[key]; got != want {
 			t.Errorf("Savedirs[%q] = %q, want default %q", key, got, want)
@@ -110,6 +111,9 @@ func TestLoadSavedirDefaultsSeeded(t *testing.T) {
 	}
 	if got, want := cfg.Savedirs["issue"], ".forge/cache/issues"; got != want {
 		t.Errorf("Savedirs[issue] = %q, want %q", got, want)
+	}
+	if got, want := cfg.Savedirs["releases"], ".forge/cache/releases"; got != want {
+		t.Errorf("Savedirs[releases] = %q, want %q", got, want)
 	}
 }
 

@@ -155,15 +155,8 @@ func (c pullCmd) Run(args []string, ctx *cli.Ctx) error {
 	}
 
 	// Dir resolution: --dir flag, then [savedir] <key> in config.
-	dir := ""
-	if d, ok := flagValue(args, "--dir"); ok && d != "" {
-		dir = d
-	} else if ctx.Cfg != nil {
-		if d, ok := ctx.Cfg.Savedirs[key]; ok && d != "" {
-			dir = d
-		}
-	}
-	if dir == "" {
+	dir, derr := resolveSavedirDir(args, key, ctx)
+	if derr != nil {
 		return &cli.Error{
 			Code: cli.ExitUsage,
 			Msg:  "no savedir for " + key,

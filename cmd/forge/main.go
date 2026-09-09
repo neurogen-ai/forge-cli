@@ -177,6 +177,8 @@ func main() {
 	reg.Register(cmds.PullCommands()...)
 	reg.Register(cmds.CacheCommands()...)
 	reg.Register(cmds.LabelCommands()...)
+	reg.Register(cmds.RepoCommands()...)
+	reg.Register(cmds.ReleaseCommands()...)
 
 	// After all family registrations so the landing-page index includes every
 	// pr-prefixed command (e.g. "pr pull"), per the auto-index intent.

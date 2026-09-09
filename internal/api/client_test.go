@@ -287,3 +287,99 @@ func TestDoStillDecodesAndSetsJSONHeaders(t *testing.T) {
 		t.Error("response body not decoded into out")
 	}
 }
+
+func TestDownloadSendsTokenAndReturnsBinaryBody(t *testing.T) {
+	var gotPath, gotAuth, gotAccept string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth, gotAccept = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Accept")
+		if gotAuth != "token tok" {
+			t.Errorf("Authorization = %q", gotAuth)
+		}
+		w.Write([]byte{0x00, 0xFF, 0x42, 0x0A})
+	}))
+	defer ts.Close()
+
+	data, err := newTestClient(ts).Download(ts.URL + "/attachments/1/forge.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/attachments/1/forge.bin" {
+		t.Errorf("path = %q", gotPath)
+	}
+	// Binary fetch sends no Accept header; the body survives byte for byte.
+	if gotAccept != "" {
+		t.Errorf("Accept = %q, want none", gotAccept)
+	}
+	want := []byte{0x00, 0xFF, 0x42, 0x0A}
+	if string(data) != string(want) {
+		t.Errorf("body = %v, want %v", data, want)
+	}
+}
+
+func TestDownloadRejectsOffHostBeforeRequest(t *testing.T) {
+	var evilHits int
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		evilHits++
+	}))
+	defer evil.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("base server must not be contacted for an off-host asset")
+	}))
+	defer ts.Close()
+
+	// The asset points at a real second listener on another host:port, so a
+	// leaked request would be observable; the check must fire first.
+	_, err := newTestClient(ts).Download(evil.URL + "/steal-token")
+	if err == nil {
+		t.Fatal("off-host download: want error, got nil")
+	}
+	if evilHits != 0 {
+		t.Errorf("off-host server saw %d requests; token must never reach it", evilHits)
+	}
+	if !strings.Contains(err.Error(), "refusing to send credentials") {
+		t.Errorf("err = %v, want credential-refusal message", err)
+	}
+}
+
+func TestDownloadRejectsSchemeMismatch(t *testing.T) {
+	var hits int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+	}))
+	defer ts.Close()
+
+	// Same host:port as the base, but https vs the base's http.
+	assetURL := "https" + strings.TrimPrefix(ts.URL, "http") + "/asset"
+	_, err := newTestClient(ts).Download(assetURL)
+	if err == nil {
+		t.Fatal("scheme-mismatched download: want error, got nil")
+	}
+	if hits != 0 {
+		t.Errorf("server saw %d requests; check must fire before the request", hits)
+	}
+}
+
+func TestDownloadSurfacesAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"asset gone"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).Download(ts.URL + "/attachments/1/gone")
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.Status != http.StatusNotFound || apiErr.Message != "asset gone" {
+		t.Fatalf("err = %v (%T), want *APIError{404 asset gone}", err, err)
+	}
+}
+
+func TestDownloadNetworkFailureIsTagged(t *testing.T) {
+	// 127.0.0.1:1 is the API base and the asset host, so the host check passes
+	// and the request fails at the transport layer.
+	client := NewClient("http://127.0.0.1:1", "tok", 0, nil)
+	_, err := client.Download("http://127.0.0.1:1/asset")
+	if err == nil || !IsNetwork(err) {
+		t.Fatalf("err = %v (%T), want tagged network error", err, err)
+	}
+}
