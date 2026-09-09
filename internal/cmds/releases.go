@@ -1,10 +1,10 @@
 package cmds
 
 import (
-	"strconv"
+	"path/filepath"
 
-	"forge/internal/api"
 	"forge/internal/cli"
+	"forge/internal/store"
 	"forge/internal/table"
 )
 
@@ -70,29 +70,116 @@ func ReleaseCommands() []cli.Command {
 	return []cli.Command{
 		releaseListCmd{},
 		releaseGetCmd{},
+		releaseDownloadCmd{},
 	}
 }
 
-// ---- release views ----
+// ---- release download ----
 
-var releaseListColumns = []table.Column{
-	{Name: "TAG", Width: 14},
-	{Name: "NAME", Width: 36},
-	{Name: "DRAFT", Width: 5},
-	{Name: "PRERELEASE", Width: 10},
-	{Name: "PUBLISHED", Width: 10},
+// ReleaseDownloadFile records one written asset. Path is the resolved
+// location on disk; Bytes is the written byte count.
+type ReleaseDownloadFile struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Bytes int    `json:"bytes"`
 }
 
-func releaseListRows(rels []api.Release) [][]string {
-	rows := make([][]string, 0, len(rels))
-	for _, r := range rels {
-		rows = append(rows, []string{
-			r.TagName,
-			r.Name,
-			strconv.FormatBool(r.Draft),
-			strconv.FormatBool(r.Prerelease),
-			timeShort(r.PublishedAt),
-		})
+// ReleaseDownloadReceipt records the download the user asked for, printed
+// once, only after every selected asset succeeded. Files is non-nil, so an
+// asset-less release serializes as "files": [].
+type ReleaseDownloadReceipt struct {
+	Tag   string                `json:"tag"`
+	Files []ReleaseDownloadFile `json:"files"`
+}
+
+type releaseDownloadCmd struct{}
+
+func (releaseDownloadCmd) Name() string { return "release download" }
+func (releaseDownloadCmd) Summary() string {
+	return "download release assets into the releases savedir"
+}
+func (releaseDownloadCmd) RequiresAPI() bool { return true }
+
+func (releaseDownloadCmd) HelpPage() string {
+	return `use: forge release download TAG [--asset NAME]...
+
+Download release TAG's assets into the seeded [savedir] releases directory
+(.forge/cache/releases by default). Assets keep their exact names; an
+existing file with the same name is overwritten. --asset selects named
+assets, repeatable, in the order given. Prints one per-file receipt only
+after every selected asset succeeds.`
+}
+
+func (releaseDownloadCmd) Run(args []string, ctx *cli.Ctx) error {
+	if len(args) == 0 {
+		return &cli.Error{Code: cli.ExitUsage, Msg: "release download requires a tag"}
 	}
-	return rows
+	tag := args[0]
+
+	var assets []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--asset" && i+1 < len(args) {
+			assets = append(assets, args[i+1])
+			i++
+		}
+	}
+
+	rel, err := ctx.API.GetRelease(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, tag)
+	if err != nil {
+		return mapErr(err)
+	}
+
+	selected := rel.Assets
+	if len(assets) > 0 {
+		selected = nil
+		for _, name := range assets {
+			for _, a := range rel.Assets {
+				if a.Name == name {
+					selected = append(selected, a)
+					break
+				}
+			}
+		}
+		for i, name := range assets {
+			if i >= len(selected) || selected[i].Name != name {
+				return &cli.Error{
+					Code: cli.ExitRuntime,
+					Msg:  "release " + tag + " has no asset " + name,
+					Hint: "run release get " + tag + " to list asset names",
+				}
+			}
+		}
+	}
+
+	// No --dir flag: release download always lands in the configured
+	// releases savedir.
+	dir, derr := resolveConfiguredSavedir(ctx, "releases")
+	if derr != nil {
+		return derr
+	}
+	root, rerr := resolveRoot(ctx)
+	if rerr != nil {
+		return rerr
+	}
+	absDir := dir
+	if !filepath.IsAbs(absDir) {
+		absDir = filepath.Join(root, dir)
+	}
+
+	// Sequential downloads, one receipt row per file, printed only after
+	// every selected asset succeeded. A failure leaves earlier files in
+	// place and prints nothing.
+	receipt := ReleaseDownloadReceipt{Tag: tag, Files: make([]ReleaseDownloadFile, 0, len(selected))}
+	for _, a := range selected {
+		data, derr := ctx.API.Download(a.BrowserDownloadURL)
+		if derr != nil {
+			return mapErr(derr)
+		}
+		path, werr := store.WriteFile(absDir, a.Name, data)
+		if werr != nil {
+			return mapErr(werr)
+		}
+		receipt.Files = append(receipt.Files, ReleaseDownloadFile{Name: a.Name, Path: path, Bytes: len(data)})
+	}
+	return writeJSON(ctx.Stdout, receipt)
 }

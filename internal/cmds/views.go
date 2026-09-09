@@ -83,3 +83,25 @@ func labelListRows(labels []api.Label) [][]string {
 	}
 	return rows
 }
+
+var releaseListColumns = []table.Column{
+	{Name: "TAG", Width: 14},
+	{Name: "NAME", Width: 36},
+	{Name: "DRAFT", Width: 5},
+	{Name: "PRERELEASE", Width: 10},
+	{Name: "PUBLISHED", Width: 10},
+}
+
+func releaseListRows(rels []api.Release) [][]string {
+	rows := make([][]string, 0, len(rels))
+	for _, r := range rels {
+		rows = append(rows, []string{
+			r.TagName,
+			r.Name,
+			strconv.FormatBool(r.Draft),
+			strconv.FormatBool(r.Prerelease),
+			timeShort(r.PublishedAt),
+		})
+	}
+	return rows
+}
