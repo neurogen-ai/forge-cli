@@ -65,3 +65,21 @@ func issueListRows(iss []api.Issue) [][]string {
 	}
 	return rows
 }
+
+var labelListColumns = []table.Column{
+	{Name: "NAME", Width: 24},
+	{Name: "COLOR", Width: 8},
+	{Name: "ID", Width: 10},
+}
+
+func labelListRows(labels []api.Label) [][]string {
+	rows := make([][]string, 0, len(labels))
+	for _, l := range labels {
+		rows = append(rows, []string{
+			l.Name,
+			l.Color,
+			strconv.FormatInt(l.ID, 10),
+		})
+	}
+	return rows
+}
