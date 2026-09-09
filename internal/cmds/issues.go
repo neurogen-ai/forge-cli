@@ -1,8 +1,6 @@
 package cmds
 
 import (
-	"strings"
-
 	"forge/internal/api"
 	"forge/internal/cli"
 	"forge/internal/table"
@@ -25,40 +23,13 @@ func (issueCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 	}
 	body, _ := flagValue(args, "--body")
 
-	var labelNames []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--label" && i+1 < len(args) {
-			labelNames = append(labelNames, args[i+1])
-			i++
-		}
+	labelNames, err := collectLabelNames(args, "issue create")
+	if err != nil {
+		return err
 	}
-
-	var labelIDs []int64
-	if len(labelNames) > 0 {
-		labels, err := ctx.API.ListLabels(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo)
-		if err != nil {
-			return mapErr(err)
-		}
-		byName := make(map[string]int64, len(labels))
-		for _, l := range labels {
-			byName[l.Name] = l.ID
-		}
-		var unknown []string
-		for _, name := range labelNames {
-			id, found := byName[name]
-			if !found {
-				unknown = append(unknown, name)
-				continue
-			}
-			labelIDs = append(labelIDs, id)
-		}
-		if len(unknown) > 0 {
-			return &cli.Error{
-				Code: cli.ExitRuntime,
-				Msg:  "unknown labels: " + strings.Join(unknown, ", "),
-				Hint: "list repository labels to see valid names",
-			}
-		}
+	labelIDs, err := resolveLabelIDs(ctx, labelNames)
+	if err != nil {
+		return err
 	}
 
 	iss, err := ctx.API.CreateIssue(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo,
