@@ -8,7 +8,7 @@ import (
 type CreateIssueInput struct {
 	Title     string   `json:"title"`
 	Body      string   `json:"body,omitempty"`
-	Labels    []int    `json:"labels,omitempty"` // label IDs; resolved from names by callers
+	Labels    []int64  `json:"labels,omitempty"` // label IDs; resolved from names by callers
 	Assignees []string `json:"assignees,omitempty"`
 }
 
@@ -103,4 +103,26 @@ func (c *Client) ListLabels(owner, repo string) ([]Label, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// LabelIDsInput is the POST /repos/{owner}/{repo}/issues/{index}/labels body.
+type LabelIDsInput struct {
+	Labels []int64 `json:"labels"`
+}
+
+// AddLabels adds labels by repository label id and returns the server's
+// label payload for the issue.
+func (c *Client) AddLabels(owner, repo string, index int, ids []int64) ([]Label, error) {
+	var out []Label
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", owner, repo, index)
+	if err := c.Do("POST", path, nil, LabelIDsInput{Labels: ids}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RemoveLabel removes one label by id. Success has no body.
+func (c *Client) RemoveLabel(owner, repo string, index int, id int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels/%d", owner, repo, index, id)
+	return c.Do("DELETE", path, nil, nil, nil)
 }

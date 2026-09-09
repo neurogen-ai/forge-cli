@@ -33,7 +33,7 @@ func (issueCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 		}
 	}
 
-	var labelIDs []int
+	var labelIDs []int64
 	if len(labelNames) > 0 {
 		labels, err := ctx.API.ListLabels(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo)
 		if err != nil {
@@ -50,7 +50,7 @@ func (issueCreateCmd) Run(args []string, ctx *cli.Ctx) error {
 				unknown = append(unknown, name)
 				continue
 			}
-			labelIDs = append(labelIDs, int(id))
+			labelIDs = append(labelIDs, id)
 		}
 		if len(unknown) > 0 {
 			return &cli.Error{
