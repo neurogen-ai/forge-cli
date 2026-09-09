@@ -59,6 +59,19 @@ func (c *Client) ListPullRequests(owner, repo, state string, page, limit int) ([
 	return List[PullRequest](c, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
 }
 
+// EditPullInput is the PATCH /repos/{owner}/{repo}/pulls/{index} body for
+// partial edits. Zero-value fields are omitted from the wire, so callers
+// patch exactly the fields the user supplied.
+type EditPullInput struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+}
+
+// EditPullRequest patches title/body and returns the updated pull request.
+func (c *Client) EditPullRequest(owner, repo string, index int, in EditPullInput) (*PullRequest, error) {
+	return c.patchPull(owner, repo, index, in)
+}
+
 // patchPull is the shared PATCH implementation for PR state fields.
 // Future PR edit fields can reuse this endpoint without duplicating
 // request construction or response decoding.

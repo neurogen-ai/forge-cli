@@ -195,3 +195,71 @@ func TestSetIssueState(t *testing.T) {
 		t.Fatalf("%v %v body=%v", err, iss, gotBody["state"])
 	}
 }
+
+func TestEditIssue(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(Issue{Number: 4, Title: "t", Body: "b"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	iss, err := c.EditIssue("o", "r", 4, EditIssueInput{Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/issues/4" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"title":"t"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if iss.Number != 4 || iss.Title != "t" {
+		t.Errorf("iss = %+v", iss)
+	}
+
+	// Body-only edit omits the empty title field.
+	if _, err := c.EditIssue("o", "r", 4, EditIssueInput{Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"body":"b"}` {
+		t.Errorf("body-only edit body = %q", gotBody)
+	}
+
+	// Both fields together send exactly two keys.
+	if _, err := c.EditIssue("o", "r", 4, EditIssueInput{Title: "t", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"title":"t","body":"b"}` {
+		t.Errorf("full edit body = %q", gotBody)
+	}
+
+	// SetIssueState still rides patchIssue and sends the same state body.
+	if _, err := c.SetIssueState("o", "r", 4, "closed"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"state":"closed"}` {
+		t.Errorf("SetIssueState body after refactor = %q", gotBody)
+	}
+}
+
+func TestEditIssueError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		io.WriteString(w, `{"message":"validation failed"}`)
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).EditIssue("o", "r", 4, EditIssueInput{Title: "t"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("err = %T, want *APIError", err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "validation failed" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}

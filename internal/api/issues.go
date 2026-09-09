@@ -65,16 +65,34 @@ func (c *Client) GetIssueComments(owner, repo string, index int) ([]Comment, err
 	return out, nil
 }
 
-// SetIssueState opens or closes an issue via PATCH /repos/{o}/{r}/issues/{index}.
-// state is "open" or "closed". Returns the updated payload.
-func (c *Client) SetIssueState(owner, repo string, index int, state string) (*Issue, error) {
+// EditIssueInput is the PATCH /repos/{owner}/{repo}/issues/{index} body for
+// partial edits. Zero-value fields are omitted from the wire, so callers
+// patch exactly the fields the user supplied.
+type EditIssueInput struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+}
+
+// EditIssue patches title/body and returns the updated issue.
+func (c *Client) EditIssue(owner, repo string, index int, in EditIssueInput) (*Issue, error) {
+	return c.patchIssue(owner, repo, index, in)
+}
+
+// patchIssue is the shared PATCH implementation for issue fields;
+// SetIssueState delegates here and keeps its signature.
+func (c *Client) patchIssue(owner, repo string, index int, fields any) (*Issue, error) {
 	var iss Issue
-	body := map[string]string{"state": state}
 	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, index)
-	if err := c.Do("PATCH", path, nil, body, &iss); err != nil {
+	if err := c.Do("PATCH", path, nil, fields, &iss); err != nil {
 		return nil, err
 	}
 	return &iss, nil
+}
+
+// SetIssueState opens or closes an issue via PATCH /repos/{o}/{r}/issues/{index}.
+// state is "open" or "closed". Returns the updated payload.
+func (c *Client) SetIssueState(owner, repo string, index int, state string) (*Issue, error) {
+	return c.patchIssue(owner, repo, index, map[string]string{"state": state})
 }
 
 // ListLabels lists repository labels (used to resolve names to IDs).

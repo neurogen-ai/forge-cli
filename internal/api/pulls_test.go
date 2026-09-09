@@ -567,3 +567,63 @@ func TestDeleteRef(t *testing.T) {
 		t.Errorf("body = %q, want no body", gotBody)
 	}
 }
+
+func TestEditPullRequest(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(PullRequest{Number: 7, Title: "t", Body: "b"})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	pr, err := c.EditPullRequest("o", "r", 7, EditPullInput{Title: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/pulls/7" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"title":"t"}` {
+		t.Errorf("body = %q", gotBody)
+	}
+	if pr.Number != 7 || pr.Title != "t" {
+		t.Errorf("pr = %+v", pr)
+	}
+
+	// Body-only edit omits the empty title field.
+	if _, err := c.EditPullRequest("o", "r", 7, EditPullInput{Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"body":"b"}` {
+		t.Errorf("body-only edit body = %q", gotBody)
+	}
+
+	// Both fields together send exactly two keys.
+	if _, err := c.EditPullRequest("o", "r", 7, EditPullInput{Title: "t", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"title":"t","body":"b"}` {
+		t.Errorf("full edit body = %q", gotBody)
+	}
+}
+
+func TestEditPullRequestError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		io.WriteString(w, `{"message":"validation failed"}`)
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).EditPullRequest("o", "r", 7, EditPullInput{Title: "t"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("err = %T, want *APIError", err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "validation failed" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
