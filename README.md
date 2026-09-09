@@ -31,6 +31,7 @@ base  = ""   # default PR base branch
 # Entries here are opt-ins that move them:
 # pr-conversation = ".forge/cache/prs"
 # issue           = ".forge/cache/issues"
+# releases        = ".forge/cache/releases"
 
 [api]
 timeout_seconds = 30 # seconds; 30 when absent everywhere
@@ -67,7 +68,8 @@ to stderr.
 ### Output contract
 
 Rendering defaults are TTY-aware: listing commands that render tables (`pr
-list`, `issue list`, `pr review list`) show human-readable tables when stdout
+list`, `issue list`, `pr review list`, `label list`, `release list`) show
+human-readable tables when stdout
 is an interactive terminal, and emit JSON otherwise.
 
 Two global flags override the default for any command:
@@ -98,6 +100,8 @@ forge pr get N
 forge pr list [--state open|closed|all] [--page N] [--limit M]
 forge pr conv N [--all] [--min-unresolved N]
 forge pr create-batch PATTERN [--base B] [--body TEXT] [--yes]
+forge pr edit N [--title T] [--body B]
+forge pr browse N [--open]
 forge pr review submit N --state approve|request-changes|comment [--body T]
 forge pr comment add N --body T
 forge pr close N
@@ -190,6 +194,13 @@ the updated pull request JSON. No prompts, no confirmation, no retry. A
 server that does not support draft changes surfaces its message through the
 normal error path.
 
+### Edit
+
+`pr edit N [--title T] [--body B]` and `issue edit N [--title T] [--body B]`
+patch title and body and print the updated object as JSON. At least one flag
+must be non-empty; that check runs before any request. Empty or absent flags
+leave the field untouched, so an edit never clears a value.
+
 ### Diff
 
 `pr diff N` prints the server's raw `.diff` bytes on stdout exactly as
@@ -271,11 +282,22 @@ forge issue get N
 forge issue close N
 forge issue open N
 forge issue comment add N --body T
+forge issue edit N [--title T] [--body B]
+forge issue label add N --label name...
+forge issue label remove N --label name...
+forge issue browse N [--open]
 ```
 
 `--label` takes label names and resolves them to ids via the labels API.
 `issue close` and `issue open` patch the issue state server-side and print
 the updated issue JSON.
+
+`label list` prints a NAME/COLOR/ID table on a TTY and JSON otherwise.
+`issue label add` resolves names to ids with one labels-list request
+(exact match, input order and duplicates preserved) and sends a single POST
+carrying every id. `issue label remove` deletes one id at a time in the given
+order and stops on the first failure. Both print a receipt naming the labels
+you asked for, only after the mutation succeeded.
 
 ### Pull
 
@@ -314,11 +336,49 @@ forge cache flush [--yes]  # delete saved files; --yes allows dirs outside the r
 that contains or lives above a `config.toml`: files named `config.toml` and
 directories that are parents of a config file are always protected.
 
+### Browse
+
+```
+forge pr browse N [--open]
+forge issue browse N [--open]
+forge repo browse [--open]
+```
+
+These print the web URL the server returned (`html_url`). With `--open` the
+URL is passed as the final argument to `$BROWSER` (split on whitespace, no
+shell), and the URL still prints when opening. Nothing opens without
+`--open`.
+
+### Releases
+
+```
+forge release list
+forge release get TAG
+forge release download TAG [--asset NAME]...
+```
+
+`release list` prints a TAG/NAME/DRAFT/PRERELEASE/PUBLISHED table on a TTY
+and JSON otherwise, in server order. `release get TAG` prints the release
+JSON. `release download TAG` writes each asset into the `.forge/cache/releases`
+savedir under its exact name, overwriting any existing file, and prints one
+receipt only after every selected asset succeeded:
+
+```json
+{"tag": "v1.2.0", "files": [{"name": "forge-linux", "path": ".forge/cache/releases/forge-linux", "bytes": 9342976}]}
+```
+
+A mid-batch failure leaves earlier files in place and prints no receipt.
+Asset URLs on a different host than the API are rejected before the token is
+sent. Scope decisions for this release live in `plans/releases/v0.4.2.md`.
+
 ### Other
 
 ```
 forge version
 ```
+
+`forge version` prints `forge-cli v0.4.2` from the `forge.Version` constant
+in repo-root `version.go`. That one line is where version numbers change.
 
 ## Errors and diagnosis
 
