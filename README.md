@@ -31,6 +31,7 @@ base  = ""   # default PR base branch
 # Entries here are opt-ins that move them:
 # pr-conversation = ".forge/cache/prs"
 # issue           = ".forge/cache/issues"
+# releases        = ".forge/cache/releases"
 
 [api]
 timeout_seconds = 30 # seconds; 30 when absent everywhere
@@ -67,7 +68,8 @@ to stderr.
 ### Output contract
 
 Rendering defaults are TTY-aware: listing commands that render tables (`pr
-list`, `issue list`, `pr review list`) show human-readable tables when stdout
+list`, `issue list`, `pr review list`, `label list`, `release list`) show
+human-readable tables when stdout
 is an interactive terminal, and emit JSON otherwise.
 
 Two global flags override the default for any command:
