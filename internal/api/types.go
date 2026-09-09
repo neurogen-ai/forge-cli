@@ -124,4 +124,5 @@ type Repository struct {
 	Name          string `json:"name"`
 	FullName      string `json:"full_name"`
 	DefaultBranch string `json:"default_branch"`
+	HTMLURL       string `json:"html_url"`
 }

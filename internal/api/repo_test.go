@@ -88,6 +88,22 @@ func TestGetRepository(t *testing.T) {
 	}
 }
 
+func TestGetRepositoryDecodesHTMLURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":7,"name":"r","full_name":"o/r","html_url":"https://git.example.com/o/r"}`))
+	}))
+	defer srv.Close()
+
+	repo, err := NewClient(srv.URL, "tok", 0, nil).GetRepository("o", "r")
+	if err != nil {
+		t.Fatalf("GetRepository: %v", err)
+	}
+	if want := "https://git.example.com/o/r"; repo.HTMLURL != want {
+		t.Fatalf("repo.HTMLURL = %q, want %q", repo.HTMLURL, want)
+	}
+}
+
 func TestGetRepository404ReturnsAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
