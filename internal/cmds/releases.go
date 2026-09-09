@@ -118,10 +118,14 @@ func (releaseDownloadCmd) Run(args []string, ctx *cli.Ctx) error {
 
 	var assets []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--asset" && i+1 < len(args) {
-			assets = append(assets, args[i+1])
-			i++
+		if args[i] != "--asset" {
+			continue
 		}
+		if i+1 >= len(args) {
+			return &cli.Error{Code: cli.ExitUsage, Msg: "--asset requires a name"}
+		}
+		assets = append(assets, args[i+1])
+		i++
 	}
 
 	rel, err := ctx.API.GetRelease(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, tag)

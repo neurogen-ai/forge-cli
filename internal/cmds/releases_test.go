@@ -127,6 +127,19 @@ func TestReleaseCommandsRegistered(t *testing.T) {
 // ---- release download ----
 
 // downloadCtx adds the repo root and the seeded releases savedir.
+func TestReleaseDownloadDanglingAssetIsUsageError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request may be sent with a dangling --asset; got %s %s", r.Method, r.URL.Path)
+	}))
+	defer ts.Close()
+
+	err := (releaseDownloadCmd{}).Run([]string{"v0.4.2", "--asset"}, downloadCtx(ts, t.TempDir()))
+	cliErr, ok := err.(*cli.Error)
+	if !ok || cliErr.Code != cli.ExitUsage {
+		t.Fatalf("dangling --asset: want usage error, got %v", err)
+	}
+}
+
 func downloadCtx(ts *httptest.Server, root string) *cli.Ctx {
 	ctx := testCtx(ts)
 	ctx.Cfg = &config.Config{Savedirs: map[string]string{"releases": ".forge/cache/releases"}}
