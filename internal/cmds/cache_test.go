@@ -81,3 +81,12 @@ func TestCacheFlushRequiresYesForOutsideRoot(t *testing.T) {
 		t.Fatalf("--yes flush failed: %v", err)
 	}
 }
+
+func TestCacheFlushWordingCoversBinaryAssets(t *testing.T) {
+	if got := (cacheFlushCmd{}).Summary(); got != "delete cached files in every savedir [--yes for outside-root dirs]" {
+		t.Errorf("flush summary = %q, want cached-files wording", got)
+	}
+	if help := (cacheFlushCmd{}).HelpPage(); !strings.Contains(help, "Delete cached files in every configured savedir") {
+		t.Errorf("flush help page still says JSON files: %q", help)
+	}
+}
