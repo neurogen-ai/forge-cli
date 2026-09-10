@@ -153,3 +153,38 @@ func git(dir string, args ...string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// FetchSHA fetches ref from url into the repository at root and returns the
+// SHA the fetch resolved to. It is the local-git half of pr checkout: the
+// only network access happens through git's own transport, never through
+// the Forgejo client. Failure modes come from the shared git() contract
+// ("not inside a git repository", or "git fetch: <stderr>").
+func FetchSHA(root, url, ref string) (string, error) {
+	if _, err := git(root, "fetch", "--no-tags", url, ref); err != nil {
+		return "", err
+	}
+	// FETCH_HEAD names the last fetched ref; with a single refspec that is
+	// exactly the requested ref's tip.
+	return git(root, "rev-parse", "FETCH_HEAD")
+}
+
+// CheckoutDetached checks out sha with HEAD detached. A dirty worktree that
+// conflicts with the checkout is refused by git itself; forge adds no
+// dirty-state heuristics of its own.
+func CheckoutDetached(root, sha string) error {
+	_, err := git(root, "checkout", "--detach", sha)
+	return err
+}
+
+// CreateBranchAt creates local branch branch pointing at sha. An existing
+// branch is a git refusal, not an overwrite.
+func CreateBranchAt(root, branch, sha string) error {
+	_, err := git(root, "branch", branch, sha)
+	return err
+}
+
+// CheckoutBranch checks out an existing local branch by name.
+func CheckoutBranch(root, branch string) error {
+	_, err := git(root, "checkout", branch)
+	return err
+}
