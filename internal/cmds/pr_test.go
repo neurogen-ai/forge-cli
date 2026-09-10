@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,14 @@ func testCtx(ts *httptest.Server) *cli.Ctx {
 		},
 		API: api.NewClient(ts.URL, "tok", 0, nil),
 	}
+}
+
+// testCtxStdin is testCtx with Stdin substituted, for commands that read
+// "-" values through ctx.Stdin.
+func testCtxStdin(ts *httptest.Server, stdin io.Reader) *cli.Ctx {
+	ctx := testCtx(ts)
+	ctx.Stdin = stdin
+	return ctx
 }
 
 func TestPRGet(t *testing.T) {

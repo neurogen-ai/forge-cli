@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"forge/internal/api"
 	"forge/internal/cli"
 )
 
@@ -132,4 +133,148 @@ func TestCommentAddTableRejectedCentrally(t *testing.T) {
 	if hits != 0 {
 		t.Errorf("--table rejection sent %d requests, want 0", hits)
 	}
+}
+
+// Bare "pr comment" resolves to the gh-spelled verb and exits 2 on a missing
+// body instead of falling through to the pr family page; "pr comment add"
+// still matches its own command through longest-match dispatch.
+func TestCommentVerbDispatch(t *testing.T) {
+	hits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		fmt.Fprint(w, `{"id":77,"html_url":"https://git.example.com/o/r/issues/7#issuecomment-77"}`)
+	}))
+	defer ts.Close()
+
+	reg := cli.NewRegistry()
+	reg.Register(PRCommands()...)
+	reg.Register(IssueCommands()...)
+	base := testCtx(ts)
+	base.Prepare = func(c *cli.Ctx, _ cli.Command) error { // main's wire sets the API client
+		c.API = api.NewClient(ts.URL, "tok", 0, nil)
+		return nil
+	}
+
+	if code := cli.Run([]string{"pr", "comment"}, reg, base); code != cli.ExitUsage {
+		t.Errorf("bare verb exit = %d want %d", code, cli.ExitUsage)
+	}
+	if hits != 0 {
+		t.Errorf("missing body sent %d requests, want 0", hits)
+	}
+
+	if code := cli.Run([]string{"pr", "comment", "7", "--body", "hi"}, reg, base); code != cli.ExitOK {
+		t.Errorf("verb exit = %d want %d", code, cli.ExitOK)
+	}
+	if hits != 1 {
+		t.Errorf("hits = %d want 1", hits)
+	}
+
+	base.Stdout.(*bytes.Buffer).Reset()
+	if code := cli.Run([]string{"pr", "comment", "add", "7", "--body", "hi"}, reg, base); code != cli.ExitOK {
+		t.Errorf("alias exit = %d want %d", code, cli.ExitOK)
+	}
+	if hits != 2 {
+		t.Errorf("hits = %d want 2", hits)
+	}
+	var rc CommentReceipt
+	if err := json.Unmarshal(base.Stdout.(*bytes.Buffer).Bytes(), &rc); err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rc.ID != 77 {
+		t.Errorf("receipt = %+v", rc)
+	}
+}
+
+// "--body -" reads the comment text from ctx.Stdin for both comment kinds;
+// a "-" with no stdin, or an empty piped body, is a usage error before any
+// request.
+func TestCommentBodyFromStdin(t *testing.T) {
+	cases := []struct {
+		cmd   commentAddCmd
+		path  string
+		stdin string
+	}{
+		{commentAddCmd{kind: "pr", gh: true}, "/api/v1/repos/o/r/issues/9/comments", "piped body\n"},
+		{commentAddCmd{kind: "issue"}, "/api/v1/repos/o/r/issues/9/comments", "issue piped"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd.Name(), func(t *testing.T) {
+			var gotPath, gotBody string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				raw, _ := io.ReadAll(r.Body)
+				gotBody = string(raw)
+				fmt.Fprint(w, `{"id":77,"html_url":"u"}`)
+			}))
+			defer ts.Close()
+			ctx := testCtxStdin(ts, strings.NewReader(tc.stdin))
+			if err := tc.cmd.Run([]string{"9", "--body", "-"}, ctx); err != nil {
+				t.Fatal(err)
+			}
+			if gotPath != tc.path {
+				t.Errorf("path = %q want %q", gotPath, tc.path)
+			}
+			want, _ := json.Marshal(map[string]string{"body": tc.stdin})
+			if gotBody != string(want) {
+				t.Errorf("body = %s want %s", gotBody, want)
+			}
+		})
+	}
+}
+
+func TestCommentStdinErrorsBeforeRequest(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		stdin io.Reader
+	}{
+		{"dash with nil stdin", []string{"7", "--body", "-"}, nil},
+		{"dash with empty stdin", []string{"7", "--body", "-"}, strings.NewReader("")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+			}))
+			defer ts.Close()
+			ctx := testCtxStdin(ts, tc.stdin)
+			err := (commentAddCmd{kind: "pr"}).Run(tc.args, ctx)
+			cerr, ok := err.(*cli.Error)
+			if !ok {
+				t.Fatalf("err = %v, want *cli.Error", err)
+			}
+			if cerr.Code != cli.ExitUsage {
+				t.Errorf("code = %d want %d", cerr.Code, cli.ExitUsage)
+			}
+			if hits != 0 {
+				t.Errorf("validation sent %d requests, want 0", hits)
+			}
+		})
+	}
+}
+
+// The issue comment help page must only advertise the registered spelling;
+// "forge issue comment" is not a command and the help must not claim it is.
+func TestIssueCommentHelpRegisteredSpelling(t *testing.T) {
+	page := (commentAddCmd{kind: "issue"}).HelpPage()
+	if !strings.HasPrefix(page, "use: forge issue comment add N --body T") {
+		t.Errorf("issue help synopsis = %q, want use: forge issue comment add N --body T", firstLine(page))
+	}
+	if strings.Contains(page, "forge issue comment N") || strings.Contains(page, "canonical spelling") {
+		t.Errorf("issue help page advertises unregistered alias:\n%s", page)
+	}
+	prPage := (commentAddCmd{kind: "pr", gh: true}).HelpPage()
+	for _, want := range []string{"use: forge pr comment N --body T", "or: forge pr comment add N --body T", "canonical spelling"} {
+		if !strings.Contains(prPage, want) {
+			t.Errorf("pr help page missing %q:\n%s", want, prPage)
+		}
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
