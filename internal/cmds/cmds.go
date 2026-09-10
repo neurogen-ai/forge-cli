@@ -31,16 +31,22 @@ func intFlag(args []string, name string, def int) int {
 	return def
 }
 
-// parseIndex parses the required numeric object index at args[0].
+// parseIndex parses the required numeric object index, accepting the first
+// strictly positive numeric token wherever it appears in args. Call sites that
+// take value flags strip them with stripFlags first, so a numeric flag value
+// is never mistaken for the index. With the index in the leading position
+// (the historical shape) the scan returns exactly what the old args[0] parse
+// returned, including the error message.
 func parseIndex(args []string, cmdName string) (int, error) {
 	if len(args) == 0 {
 		return 0, &cli.Error{Code: cli.ExitUsage, Msg: cmdName + " requires an issue or PR number"}
 	}
-	n, err := strconv.Atoi(args[0])
-	if err != nil || n <= 0 {
-		return 0, &cli.Error{Code: cli.ExitUsage, Msg: fmt.Sprintf("%s: %q is not a valid number", cmdName, args[0])}
+	for _, arg := range args {
+		if n, err := strconv.Atoi(arg); err == nil && n > 0 {
+			return n, nil
+		}
 	}
-	return n, nil
+	return 0, &cli.Error{Code: cli.ExitUsage, Msg: fmt.Sprintf("%s: %q is not a valid number", cmdName, args[0])}
 }
 
 // writeJSON pretty-prints v to w.
@@ -60,6 +66,28 @@ func stripFlag(args []string, name string) []string {
 			continue
 		}
 		out = append(out, args[i])
+	}
+	return out
+}
+
+// stripFlags removes every "--name value" pair for the named flags from args,
+// preserving the order of the remaining arguments. A named flag with no
+// following token consumes nothing. Call sites list only their value-taking
+// flags; boolean flags carry no value and must not be listed.
+func stripFlags(args []string, names ...string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		consumed := false
+		for _, name := range names {
+			if args[i] == name && i+1 < len(args) {
+				i++
+				consumed = true
+				break
+			}
+		}
+		if !consumed {
+			out = append(out, args[i])
+		}
 	}
 	return out
 }
