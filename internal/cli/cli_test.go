@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -152,10 +153,11 @@ func TestPreCommandParsingUnchanged(t *testing.T) {
 // helpCmd is a fake command for the end-to-end help cases; one family member
 // per prefix keeps GroupPrefix satisfied in every fixture below.
 type helpCmd struct {
-	name    string
-	runErr  error
-	ran     bool
-	gotArgs []string
+	name     string
+	runErr   error
+	ran      bool
+	gotArgs  []string
+	gotStdin io.Reader
 }
 
 func (c *helpCmd) Name() string    { return c.name }
@@ -163,6 +165,7 @@ func (c *helpCmd) Summary() string { return c.name + " does things" }
 func (c *helpCmd) Run(args []string, ctx *Ctx) error {
 	c.ran = true
 	c.gotArgs = args
+	c.gotStdin = ctx.Stdin
 	return c.runErr
 }
 
@@ -172,6 +175,7 @@ type helpRunResult struct {
 	prepared bool
 	code     int
 	do       *helpCmd
+	gotStdin io.Reader
 }
 
 // runHelp runs argv against a registry holding "x do" and "x undo". runErr is
@@ -186,6 +190,7 @@ func runHelp(t *testing.T, argv []string, runErr error) helpRunResult {
 	base := &Ctx{
 		Stdout: &stdout,
 		Stderr: &stderr,
+		Stdin:  strings.NewReader("piped"),
 		Prepare: func(ctx *Ctx, cmd Command) error {
 			res.prepared = true
 			return nil
@@ -194,8 +199,26 @@ func runHelp(t *testing.T, argv []string, runErr error) helpRunResult {
 	res.code = Run(argv, reg, base)
 	res.stdout = stdout.String()
 	res.stderr = stderr.String()
+	res.gotStdin = res.do.gotStdin
 	_ = undo
 	return res
+}
+
+// TestStdinReachesCommands proves the base Ctx's Stdin survives Run's field
+// copy and reaches Command.Run.
+func TestStdinReachesCommands(t *testing.T) {
+	res := runHelp(t, []string{"x", "do"}, nil)
+	if !res.do.ran {
+		t.Fatal("x do did not run")
+	}
+	si, ok := res.gotStdin.(*strings.Reader)
+	if !ok {
+		t.Fatalf("ctx.Stdin = %T; want *strings.Reader", res.gotStdin)
+	}
+	b, err := io.ReadAll(si)
+	if err != nil || string(b) != "piped" {
+		t.Fatalf("read stdin = %q, %v; want %q, nil", b, err, "piped")
+	}
 }
 
 func TestGroupHelpFlagListsFamilyPage(t *testing.T) {

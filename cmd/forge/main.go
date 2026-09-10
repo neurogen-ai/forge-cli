@@ -189,6 +189,7 @@ func main() {
 	base := &cli.Ctx{
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
+		Stdin:   os.Stdin,
 		Prepare: wire,
 	}
 
