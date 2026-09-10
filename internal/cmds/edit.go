@@ -29,7 +29,7 @@ func editInput(args []string) (in api.EditPullInput, ok bool) {
 }
 
 func (c editCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, c.Name())
+	n, err := parseIndex(stripFlags(args, "--title", "--body"), c.Name())
 	if err != nil {
 		return err
 	}

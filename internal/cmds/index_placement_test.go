@@ -6,10 +6,14 @@ package cmds
 // 42, --body 11, --review 11) is never mistaken for the index.
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"forge/internal/api"
 )
 
 // indexFixture records every request path and answers the minimal payloads
@@ -186,6 +190,73 @@ func TestIndexPlacementResolveAll(t *testing.T) {
 			if err := (resolveAllCmd{}).Run(tc.args, testCtx(ts)); err != nil {
 				t.Fatal(err)
 			}
+		})
+	}
+}
+
+func TestIndexPlacementEdit(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		args    []string
+		want    string
+		notWant string
+	}{
+		{"index first", "pr", []string{"11", "--title", "t"}, "/pulls/11", ""},
+		{"flags first", "issue", []string{"--body", "b", "11"}, "/issues/11", ""},
+		{"numeric flag value", "pr", []string{"--title", "42", "--body", "x", "11"}, "/pulls/11", "/pulls/42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" "+tc.kind, func(t *testing.T) {
+			var gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				fmt.Fprint(w, `{"number":11,"title":"t"}`)
+			}))
+			defer ts.Close()
+			if err := (editCmd{kind: tc.kind}).Run(tc.args, testCtx(ts)); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(gotPath, tc.want) {
+				t.Errorf("request path = %q, want suffix %q", gotPath, tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(gotPath, tc.notWant) {
+				t.Errorf("request path = %q, flag value 42 was mistaken for the index", gotPath)
+			}
+		})
+	}
+}
+
+func TestIndexPlacementIssueLabel(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		want    string
+		notWant string
+	}{
+		{"index first", []string{"7", "--label", "bug"}, "/issues/7/labels", ""},
+		{"flags first", []string{"--label", "bug", "7"}, "/issues/7/labels", ""},
+		{"numeric flag value", []string{"--label", "5", "7"}, "/issues/7/labels", "/issues/5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/v1/repos/o/r/labels":
+					json.NewEncoder(w).Encode([]api.Label{{ID: 5, Name: "5"}, {ID: 6, Name: "bug"}})
+					return
+				default:
+					gotPath = r.URL.Path
+					json.NewEncoder(w).Encode([]api.Label{{ID: 5}})
+					return
+				}
+			}))
+			defer ts.Close()
+			if err := (issueLabelCmd{adding: true}).Run(tc.args, testCtx(ts)); err != nil {
+				t.Fatal(err)
+			}
+			wantPaths(t, &indexFixture{paths: []string{gotPath}}, tc.want, tc.notWant)
 		})
 	}
 }
