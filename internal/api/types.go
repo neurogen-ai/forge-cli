@@ -43,6 +43,7 @@ type PullRequest struct {
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
+		Sha string `json:"sha"`
 	} `json:"base"`
 
 	Labels []Label `json:"labels,omitempty"`

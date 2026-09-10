@@ -674,7 +674,7 @@ func TestGetPullRequestDecodeAuditFields(t *testing.T) {
 	if pr.Head.Repo.CloneURL != "https://forge/o/r.git" || pr.Head.Repo.FullName != "o/r" {
 		t.Errorf("Head.Repo = %+v", pr.Head.Repo)
 	}
-	if pr.Base.Ref != "main" || pr.Head.Sha != "abc123" {
+	if pr.Base.Ref != "main" || pr.Base.Sha != "def456" || pr.Head.Sha != "abc123" {
 		t.Errorf("head/base = %+v/%+v", pr.Head, pr.Base)
 	}
 }
