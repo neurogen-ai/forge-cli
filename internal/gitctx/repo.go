@@ -182,3 +182,9 @@ func CreateBranchAt(root, branch, sha string) error {
 	_, err := git(root, "branch", branch, sha)
 	return err
 }
+
+// CheckoutBranch checks out an existing local branch by name.
+func CheckoutBranch(root, branch string) error {
+	_, err := git(root, "checkout", branch)
+	return err
+}

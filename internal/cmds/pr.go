@@ -244,6 +244,7 @@ func PRCommands() []cli.Command {
 		editCmd{kind: "pr"},
 		browseCmd{kind: "pr"},
 		prMergeCmd{},
+		prCheckoutCmd{},
 		prDiffCmd{},
 		deprecatedPrConvCmd{},
 	}
