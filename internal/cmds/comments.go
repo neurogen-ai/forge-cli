@@ -70,19 +70,25 @@ func (c commentAddCmd) run(args []string, ctx *cli.Ctx) error {
 }
 
 func (c commentAddCmd) HelpPage() string {
-	verb, alias := c.kind+" comment", c.kind+" comment add"
 	if !c.gh {
-		verb, alias = alias, verb
-	}
-	return fmt.Sprintf(`use: forge %[1]s N --body T
-   or: forge %[2]s N --body T
+		return fmt.Sprintf(`use: forge %[1]s N --body T
 
-Add one comment to %[3]s N and print a JSON receipt {id, html_url}.
+Add one comment to %[1]s N and print a JSON receipt {id, html_url}.
 --body is required; an empty body is a usage error before any request.
 --body - reads the comment text from stdin.
-"%[1]s" is the canonical spelling; "%[2]s" is a compatibility alias with
+
+Single-shot: one POST, one receipt. The receipt is the full output; --table
+is rejected.`, c.kind+" comment add")
+	}
+	return fmt.Sprintf(`use: forge pr comment N --body T
+   or: forge pr comment add N --body T
+
+Add one comment to pr N and print a JSON receipt {id, html_url}.
+--body is required; an empty body is a usage error before any request.
+--body - reads the comment text from stdin.
+"pr comment" is the canonical spelling; "pr comment add" is a compatibility alias with
 the same receipt.
 
 Single-shot: one POST, one receipt. The receipt is the full output; --table
-is rejected.`, verb, alias, c.kind)
+is rejected.`)
 }

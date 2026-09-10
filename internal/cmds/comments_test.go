@@ -253,3 +253,28 @@ func TestCommentStdinErrorsBeforeRequest(t *testing.T) {
 		})
 	}
 }
+
+// The issue comment help page must only advertise the registered spelling;
+// "forge issue comment" is not a command and the help must not claim it is.
+func TestIssueCommentHelpRegisteredSpelling(t *testing.T) {
+	page := (commentAddCmd{kind: "issue"}).HelpPage()
+	if !strings.HasPrefix(page, "use: forge issue comment add N --body T") {
+		t.Errorf("issue help synopsis = %q, want use: forge issue comment add N --body T", firstLine(page))
+	}
+	if strings.Contains(page, "forge issue comment N") || strings.Contains(page, "canonical spelling") {
+		t.Errorf("issue help page advertises unregistered alias:\n%s", page)
+	}
+	prPage := (commentAddCmd{kind: "pr", gh: true}).HelpPage()
+	for _, want := range []string{"use: forge pr comment N --body T", "or: forge pr comment add N --body T", "canonical spelling"} {
+		if !strings.Contains(prPage, want) {
+			t.Errorf("pr help page missing %q:\n%s", want, prPage)
+		}
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
