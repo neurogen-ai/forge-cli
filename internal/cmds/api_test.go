@@ -277,6 +277,9 @@ func TestRunJQFailedFilter(t *testing.T) {
 }
 
 func TestAPIPassthroughJQEndToEnd(t *testing.T) {
+	// Canned fake jq: consumes stdin, prints what real jq would for .name
+	// on this response body. Proves PATH resolution and output plumbing.
+	writeFakeJQ(t, t.TempDir(), "cat > /dev/null\necho '\"forge\"'\n")
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"name":"forge"}`))
