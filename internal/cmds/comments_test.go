@@ -278,3 +278,123 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// Anchor flags present route the comment to the review-comment transport:
+// one COMMENT review carrying a single inline entry, and an anchored receipt.
+func TestCommentAnchoredSuccess(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		want    string
+		receipt AnchoredCommentReceipt
+	}{
+		{
+			name:    "new side default",
+			args:    []string{"5", "--body", "off by one", "--file", "main.go", "--line", "12"},
+			want:    `{"event":"COMMENT","body":"off by one","comments":[{"path":"main.go","body":"off by one","new_line_num":12}]}`,
+			receipt: AnchoredCommentReceipt{ID: 77, Path: "main.go", Line: 12, HTMLURL: "https://h/o/r/pulls/5#discussion_r77"},
+		},
+		{
+			name:    "old side recorded",
+			args:    []string{"5", "--body", "legacy line", "--file", "main.go", "--line", "3", "--side", "old"},
+			want:    `{"event":"COMMENT","body":"legacy line","comments":[{"path":"main.go","body":"legacy line","old_line_num":3}]}`,
+			receipt: AnchoredCommentReceipt{ID: 77, Path: "main.go", Line: 3, Side: "old", HTMLURL: "https://h/o/r/pulls/5#discussion_r77"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				requests = append(requests, r.Method+" "+r.URL.Path+" "+string(raw))
+				fmt.Fprint(w, `{"id":9,"state":"COMMENT","comments":[{"id":77,"path":"main.go","html_url":"https://h/o/r/pulls/5#discussion_r77"}]}`)
+			}))
+			defer ts.Close()
+			ctx := testCtx(ts)
+			cmd := commentAddCmd{kind: "pr", gh: true}
+			if err := cmd.Run(tc.args, ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(requests) != 1 {
+				t.Fatalf("requests = %v", requests)
+			}
+			if requests[0] != "POST /api/v1/repos/o/r/pulls/5/reviews "+tc.want {
+				t.Errorf("request = %q", requests[0])
+			}
+			var rc AnchoredCommentReceipt
+			if err := json.Unmarshal([]byte(ctx.Stdout.(*bytes.Buffer).String()), &rc); err != nil {
+				t.Fatalf("receipt: %v", err)
+			}
+			if rc != tc.receipt {
+				t.Errorf("receipt = %+v want %+v", rc, tc.receipt)
+			}
+		})
+	}
+}
+
+// A server that rejects the anchor is the standard exit-1 path with the
+// server message, and no comment is posted by the ordinary path.
+func TestCommentAnchoredServerReject(t *testing.T) {
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"line 404 is not part of the diff"}`))
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	cmd := commentAddCmd{kind: "pr", gh: true}
+	err := cmd.Run([]string{"5", "--body", "hi", "--file", "f.go", "--line", "404"}, ctx)
+	mapped, ok := err.(*cli.Error)
+	if !ok {
+		t.Fatalf("want *cli.Error, got %T: %v", err, err)
+	}
+	if mapped.Code != cli.ExitRuntime {
+		t.Errorf("code = %d", mapped.Code)
+	}
+	if !strings.Contains(mapped.Msg, "line 404 is not part of the diff") {
+		t.Errorf("server message lost: %q", mapped.Msg)
+	}
+	if len(paths) != 1 || paths[0] != "/api/v1/repos/o/r/pulls/5/reviews" {
+		t.Fatalf("anchor must be the only request, got %v", paths)
+	}
+}
+
+// Flag-validation cases exit 2 before any HTTP traffic.
+func TestCommentAnchoredValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		msg  string
+	}{
+		{"file without line", []string{"5", "--body", "hi", "--file", "f.go"}, "--line requires"},
+		{"line without file", []string{"5", "--body", "hi", "--line", "3"}, "--file requires"},
+		{"bad side", []string{"5", "--body", "hi", "--file", "f.go", "--line", "3", "--side", "sideways"}, "--side must be old or new"},
+		{"zero line", []string{"5", "--body", "hi", "--file", "f.go", "--line", "0"}, "--line"},
+		{"negative line", []string{"5", "--body", "hi", "--file", "f.go", "--line", "-2"}, "--line"},
+		{"non-numeric line", []string{"5", "--body", "hi", "--file", "f.go", "--line", "x"}, "--line"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+				fmt.Fprint(w, `{}`)
+			}))
+			defer ts.Close()
+			ctx := testCtx(ts)
+			cmd := commentAddCmd{kind: "pr", gh: true}
+			err := cmd.Run(tc.args, ctx)
+			mapped, ok := err.(*cli.Error)
+			if !ok || mapped.Code != cli.ExitUsage {
+				t.Fatalf("want usage error, got %T: %v", err, err)
+			}
+			if !strings.Contains(mapped.Msg, tc.msg) {
+				t.Errorf("msg = %q, want substring %q", mapped.Msg, tc.msg)
+			}
+			if hits != 0 {
+				t.Errorf("%d requests sent; validation must happen before any request", hits)
+			}
+		})
+	}
+}

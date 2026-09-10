@@ -187,28 +187,28 @@ func TestCreateAnchoredCommentAPIError(t *testing.T) {
 }
 
 func TestAnchorToWire(t *testing.T) {
-	in, err := anchorToWire("README.md", 7, "")
+	in, err := AnchorToWire("README.md", 7, "")
 	if err != nil || in.Path != "README.md" || in.NewLineNum != 7 || in.OldLineNum != 0 {
 		t.Errorf("side empty: in = %+v, err = %v", in, err)
 	}
-	in, err = anchorToWire("README.md", 7, "new")
+	in, err = AnchorToWire("README.md", 7, "new")
 	if err != nil || in.NewLineNum != 7 {
 		t.Errorf("side new: in = %+v, err = %v", in, err)
 	}
-	in, err = anchorToWire("README.md", 7, "old")
+	in, err = AnchorToWire("README.md", 7, "old")
 	if err != nil || in.OldLineNum != 7 || in.NewLineNum != 0 {
 		t.Errorf("side old: in = %+v, err = %v", in, err)
 	}
-	if _, err = anchorToWire("", 7, ""); err == nil {
+	if _, err = AnchorToWire("", 7, ""); err == nil {
 		t.Error("missing file must error")
 	}
-	if _, err = anchorToWire("f.go", 0, ""); err == nil {
+	if _, err = AnchorToWire("f.go", 0, ""); err == nil {
 		t.Error("zero line must error")
 	}
-	if _, err = anchorToWire("f.go", -3, ""); err == nil {
+	if _, err = AnchorToWire("f.go", -3, ""); err == nil {
 		t.Error("negative line must error")
 	}
-	if _, err = anchorToWire("f.go", 7, "sideways"); err == nil {
+	if _, err = AnchorToWire("f.go", 7, "sideways"); err == nil {
 		t.Error("bad side must error")
 	}
 }

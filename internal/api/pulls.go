@@ -100,9 +100,10 @@ func (c *Client) CreateAnchoredComment(owner, repo string, index int, in CreateA
 	return &ReviewComment{ID: resp.ID, Body: in0.Body, Path: in0.Path}, nil
 }
 
-// anchorToWire maps --file/--line/--side(old|new) onto the wire encoding the
-// contract documents. A side of "" means the new line.
-func anchorToWire(file string, line int64, side string) (ReviewCommentInput, error) {
+// AnchorToWire maps --file/--line/--side(old|new) onto the wire encoding the
+// contract documents. A side of "" means the new line. It is the only place
+// the wire encoding lives, so gh-shaped flags stay put across encoding drift.
+func AnchorToWire(file string, line int64, side string) (ReviewCommentInput, error) {
 	if file == "" {
 		return ReviewCommentInput{}, fmt.Errorf("--file is required")
 	}

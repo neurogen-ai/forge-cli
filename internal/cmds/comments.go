@@ -2,7 +2,9 @@ package cmds
 
 import (
 	"fmt"
+	"strconv"
 
+	"forge/internal/api"
 	"forge/internal/cli"
 )
 
@@ -34,12 +36,22 @@ type CommentReceipt struct {
 	HTMLURL string `json:"html_url"`
 }
 
+// AnchoredCommentReceipt is the mutation output for an anchored inline
+// comment: what was anchored, as the user asked it, plus the server URL.
+type AnchoredCommentReceipt struct {
+	ID      int64  `json:"id"`
+	Path    string `json:"path"`
+	Line    int64  `json:"line"`
+	Side    string `json:"side,omitempty"`
+	HTMLURL string `json:"html_url"`
+}
+
 func (c commentAddCmd) Run(args []string, ctx *cli.Ctx) error { return c.run(args, ctx) }
 
 // run is the one comment-adding implementation; both spellings delegate here
 // so receipts stay identical however the user spells the command.
 func (c commentAddCmd) run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(stripFlags(args, "--body"), c.Name())
+	n, err := parseIndex(stripFlags(args, "--body", "--file", "--line", "--side"), c.Name())
 	if err != nil {
 		return err
 	}
@@ -62,11 +74,82 @@ func (c commentAddCmd) run(args []string, ctx *cli.Ctx) error {
 			Hint: "piped stdin for --body - was empty; pass the comment text with --body",
 		}
 	}
-	comment, err := ctx.API.AddComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, string(data))
+	text := string(data)
+	_, hasFile := flagValue(args, "--file")
+	_, hasLine := flagValue(args, "--line")
+	_, hasSide := flagValue(args, "--side")
+	if hasFile || hasLine || hasSide {
+		return c.runAnchored(args, ctx, n, hasFile, text)
+	}
+	comment, err := ctx.API.AddComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, text)
 	if err != nil {
 		return mapErr(err)
 	}
 	return writeJSON(ctx.Stdout, CommentReceipt{ID: comment.ID, HTMLURL: comment.HTMLURL})
+}
+
+// runAnchored posts the comment as one inline review comment anchored to a
+// diff hunk. Anchor flags are validated here before any request; the wire
+// encoding lives only in internal/api's AnchorToWire. A server rejection of
+// the anchor is the standard exit-1 path; there is no fallback to the
+// unanchored issue-comment transport.
+func (c commentAddCmd) runAnchored(args []string, ctx *cli.Ctx, n int, hasFile bool, text string) error {
+	lineStr, hasLine := flagValue(args, "--line")
+	if !hasLine || !hasFile {
+		missing := "--line"
+		if hasLine {
+			missing = "--file"
+		}
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  fmt.Sprintf("%s: %s requires --file and --line", c.Name(), missing),
+			Hint: "anchor to one hunk line with --file P --line L",
+		}
+	}
+	line, err := strconv.Atoi(lineStr)
+	if err != nil || line <= 0 {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  fmt.Sprintf("%s: --line %q is not a positive line number", c.Name(), lineStr),
+		}
+	}
+	side, _ := flagValue(args, "--side")
+	if side != "" && side != "old" && side != "new" {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  c.Name() + ": --side must be old or new",
+		}
+	}
+	// --line (or --side) without --file cannot anchor; fail before any request.
+	file, _ := flagValue(args, "--file")
+	entry, err := api.AnchorToWire(file, int64(line), side)
+	if err != nil {
+		return &cli.Error{Code: cli.ExitUsage, Msg: c.Name() + ": " + err.Error()}
+	}
+	entry.Body = text
+	return c.postAnchored(ctx, n, entry, side)
+}
+
+// postAnchored sends the anchored review comment and prints the receipt.
+func (c commentAddCmd) postAnchored(ctx *cli.Ctx, n int, entry api.ReviewCommentInput, side string) error {
+	rc, err := ctx.API.CreateAnchoredComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, api.CreateAnchoredCommentInput{
+		Body:     entry.Body,
+		Comments: []api.ReviewCommentInput{entry},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	line := entry.NewLineNum
+	if side == "old" {
+		line = entry.OldLineNum
+	}
+	return writeJSON(ctx.Stdout, AnchoredCommentReceipt{
+		ID:      rc.ID,
+		Path:    entry.Path,
+		Line:    line,
+		Side:    side,
+		HTMLURL: rc.HTMLURL,
+	})
 }
 
 func (c commentAddCmd) HelpPage() string {
@@ -86,6 +169,12 @@ is rejected.`, c.kind+" comment add")
 Add one comment to pr N and print a JSON receipt {id, html_url}.
 --body is required; an empty body is a usage error before any request.
 --body - reads the comment text from stdin.
+
+Anchor the comment to one diff hunk line with --file P --line L [--side old|new]:
+the comment is posted as an inline review comment on that line; --side defaults
+to new. A server that cannot anchor the line fails with the server message;
+the comment is never posted unanchored.
+
 "pr comment" is the canonical spelling; "pr comment add" is a compatibility alias with
 the same receipt.
 
