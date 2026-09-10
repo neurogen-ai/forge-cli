@@ -369,6 +369,10 @@ func TestCommentAnchoredValidation(t *testing.T) {
 	}{
 		{"file without line", []string{"5", "--body", "hi", "--file", "f.go"}, "--line requires"},
 		{"line without file", []string{"5", "--body", "hi", "--line", "3"}, "--file requires"},
+		{"dangling file flag", []string{"5", "--body", "hi", "--file"}, "--line requires"},
+		{"dangling line flag", []string{"5", "--body", "hi", "--file", "f.go", "--line"}, "--line requires a line number"},
+		{"dangling file with line", []string{"5", "--body", "hi", "--line", "3", "--file"}, "--file requires a path value"},
+		{"dangling side flag", []string{"5", "--body", "hi", "--file", "f.go", "--line", "3", "--side"}, "--side requires old or new"},
 		{"bad side", []string{"5", "--body", "hi", "--file", "f.go", "--line", "3", "--side", "sideways"}, "--side must be old or new"},
 		{"zero line", []string{"5", "--body", "hi", "--file", "f.go", "--line", "0"}, "--line"},
 		{"negative line", []string{"5", "--body", "hi", "--file", "f.go", "--line", "-2"}, "--line"},
