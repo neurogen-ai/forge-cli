@@ -106,6 +106,113 @@ func TestSubmitReviewAPIError(t *testing.T) {
 	}
 }
 
+func TestCreateAnchoredComment(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(reviewWithComments{
+			Review:   Review{ID: 9, State: "COMMENT"},
+			Comments: []ReviewComment{{ID: 77, Path: "README.md", HTMLURL: "https://h/o/r/pulls/5#discussion-r77"}},
+		})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	in := CreateAnchoredCommentInput{
+		Body:     "context",
+		Comments: []ReviewCommentInput{{Path: "README.md", NewLineNum: 3}},
+	}
+	rc, err := c.CreateAnchoredComment("o", "r", 5, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/5/reviews" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	// Exact wire shape: event COMMENT plus one inline entry with the
+	// documented old_line_num/new_line_num encoding.
+	want := `{"event":"COMMENT","body":"context","comments":[{"path":"README.md","body":"","new_line_num":3}]}`
+	if gotBody != want {
+		t.Errorf("body = %q", gotBody)
+	}
+	if rc.ID != 77 || rc.Path != "README.md" || rc.HTMLURL != "https://h/o/r/pulls/5#discussion-r77" {
+		t.Errorf("rc = %+v", rc)
+	}
+}
+
+func TestCreateAnchoredCommentSideOld(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(reviewWithComments{Review: Review{ID: 9}})
+	}))
+	defer ts.Close()
+
+	in := CreateAnchoredCommentInput{Comments: []ReviewCommentInput{{Path: "f.go", OldLineNum: 12}}}
+	rc, err := newTestClient(ts).CreateAnchoredComment("o", "r", 5, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"event":"COMMENT","comments":[{"path":"f.go","body":"","old_line_num":12}]}`
+	if gotBody != want {
+		t.Errorf("body = %q", gotBody)
+	}
+	// No echoed comments: entry rebuilt from the input so receipts stay honest.
+	if rc.ID != 9 || rc.Path != "f.go" {
+		t.Errorf("rc = %+v", rc)
+	}
+}
+
+func TestCreateAnchoredCommentAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		w.Write([]byte(`{"message":"line 404 is not part of the diff"}`))
+	}))
+	defer ts.Close()
+
+	in := CreateAnchoredCommentInput{Comments: []ReviewCommentInput{{Path: "f.go", NewLineNum: 404}}}
+	_, err := newTestClient(ts).CreateAnchoredComment("o", "r", 5, in)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 422 || apiErr.Message != "line 404 is not part of the diff" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestAnchorToWire(t *testing.T) {
+	in, err := anchorToWire("README.md", 7, "")
+	if err != nil || in.Path != "README.md" || in.NewLineNum != 7 || in.OldLineNum != 0 {
+		t.Errorf("side empty: in = %+v, err = %v", in, err)
+	}
+	in, err = anchorToWire("README.md", 7, "new")
+	if err != nil || in.NewLineNum != 7 {
+		t.Errorf("side new: in = %+v, err = %v", in, err)
+	}
+	in, err = anchorToWire("README.md", 7, "old")
+	if err != nil || in.OldLineNum != 7 || in.NewLineNum != 0 {
+		t.Errorf("side old: in = %+v, err = %v", in, err)
+	}
+	if _, err = anchorToWire("", 7, ""); err == nil {
+		t.Error("missing file must error")
+	}
+	if _, err = anchorToWire("f.go", 0, ""); err == nil {
+		t.Error("zero line must error")
+	}
+	if _, err = anchorToWire("f.go", -3, ""); err == nil {
+		t.Error("negative line must error")
+	}
+	if _, err = anchorToWire("f.go", 7, "sideways"); err == nil {
+		t.Error("bad side must error")
+	}
+}
+
 func TestGetPullRequest(t *testing.T) {
 	var gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -85,6 +85,7 @@ type ReviewComment struct {
 	Body      string     `json:"body"`
 	DiffHunk  string     `json:"diff_hunk"`
 	Path      string     `json:"path"`
+	HTMLURL   string     `json:"html_url"`
 	CreatedAt *time.Time `json:"created_at"`
 
 	// Anchors. TreePath repeats Path on some servers; both decoded, callers
