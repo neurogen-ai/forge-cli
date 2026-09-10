@@ -627,3 +627,69 @@ func TestEditPullRequestError(t *testing.T) {
 		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
+
+func TestGetPullRequestDecodeAuditFields(t *testing.T) {
+	var gotPath, gotMethod string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		fmt.Fprint(w, `{
+			"number": 5,
+			"title": "t",
+			"body": "b",
+			"state": "open",
+			"draft": true,
+			"updated_at": "2024-06-01T12:00:00Z",
+			"merged": false,
+			"mergeable": true,
+			"html_url": "https://forge/o/r/pulls/5",
+			"head": {
+				"ref": "feature",
+				"sha": "abc123",
+				"repo": {"id": 9, "name": "r", "full_name": "o/r", "clone_url": "https://forge/o/r.git", "default_branch": "main", "html_url": "https://forge/o/r"}
+			},
+			"base": {"ref": "main", "sha": "def456"}
+		}`)
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).GetPullRequest("o", "r", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "GET" || gotPath != "/api/v1/repos/o/r/pulls/5" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if !pr.Draft || !pr.Mergeable || pr.Merged {
+		t.Errorf("draft/mergeable/merged = %v/%v/%v", pr.Draft, pr.Mergeable, pr.Merged)
+	}
+	if pr.UpdatedAt == nil || pr.UpdatedAt.UTC().Year() != 2024 {
+		t.Errorf("UpdatedAt = %v", pr.UpdatedAt)
+	}
+	if pr.HTMLURL != "https://forge/o/r/pulls/5" {
+		t.Errorf("HTMLURL = %q", pr.HTMLURL)
+	}
+	if pr.Head.Repo == nil {
+		t.Fatal("Head.Repo is nil, want decoded repository")
+	}
+	if pr.Head.Repo.CloneURL != "https://forge/o/r.git" || pr.Head.Repo.FullName != "o/r" {
+		t.Errorf("Head.Repo = %+v", pr.Head.Repo)
+	}
+	if pr.Base.Ref != "main" || pr.Head.Sha != "abc123" {
+		t.Errorf("head/base = %+v/%+v", pr.Head, pr.Base)
+	}
+}
+
+func TestGetPullRequestOmittedFieldsStayZero(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number": 6, "state": "open", "head": {"ref": "h", "sha": "s"}}`)
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).GetPullRequest("o", "r", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Draft || pr.Merged || pr.Mergeable || pr.UpdatedAt != nil || pr.Head.Repo != nil {
+		t.Errorf("omitted fields must stay zero-valued, got %+v", pr)
+	}
+}
