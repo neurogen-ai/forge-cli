@@ -52,6 +52,40 @@ func TestPRGet(t *testing.T) {
 	}
 }
 
+func TestPRView(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		fmt.Fprint(w, `{"number":5,"title":"t","state":"open","draft":true,"mergeable":true}`)
+	}))
+	defer ts.Close()
+
+	cmd := prViewCmd{}
+	if err := cmd.Run([]string{"5"}, testCtx(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/v1/repos/o/r/pulls/5" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestPRViewRequiresNumber(t *testing.T) {
+	err := (prViewCmd{}).Run(nil, testCtx(httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))))
+	cerr, ok := err.(*cli.Error)
+	if !ok || cerr.Code != cli.ExitUsage {
+		t.Fatalf("want ExitUsage, got %v", err)
+	}
+}
+
+func TestPRViewRegistered(t *testing.T) {
+	for _, c := range PRCommands() {
+		if c.Name() == "pr view" {
+			return
+		}
+	}
+	t.Fatal("pr view not registered")
+}
+
 func TestPRGetRequiresNumber(t *testing.T) {
 	err := (prGetCmd{}).Run(nil, testCtx(httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))))
 	cerr, ok := err.(*cli.Error)

@@ -123,14 +123,10 @@ A 404 here is diagnosed: missing base branch, missing head branch, or pull
 requests disabled for the repo.`
 }
 
-type prGetCmd struct{}
-
-func (prGetCmd) Name() string      { return "pr get" }
-func (prGetCmd) Summary() string   { return "print one pull request as JSON (usage: pr get N)" }
-func (prGetCmd) RequiresAPI() bool { return true }
-
-func (prGetCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr get")
+// runPRGet is the one implementation behind both spellings, so receipts
+// are byte-identical whatever the user typed.
+func runPRGet(args []string, ctx *cli.Ctx, invoked string) error {
+	n, err := parseIndex(args, invoked)
 	if err != nil {
 		return err
 	}
@@ -141,13 +137,46 @@ func (prGetCmd) Run(args []string, ctx *cli.Ctx) error {
 	return writeJSON(ctx.Stdout, pr)
 }
 
-// ---- pr list ----
+// prViewCmd is the canonical gh-style spelling of pr get.
+type prViewCmd struct{}
+
+func (prViewCmd) Name() string      { return "pr view" }
+func (prViewCmd) Summary() string   { return "print one pull request as JSON (usage: pr view N)" }
+func (prViewCmd) RequiresAPI() bool { return true }
+
+func (prViewCmd) Run(args []string, ctx *cli.Ctx) error {
+	return runPRGet(args, ctx, "pr view")
+}
+
+func (prViewCmd) HelpPage() string {
+	return `use: forge pr view N
+
+Print one pull request as JSON. N is the PR number. pr view is the
+canonical spelling; pr get N stays as a compatibility alias with the
+same output.`
+}
+
+type prGetCmd struct{}
+
+func (prGetCmd) Name() string { return "pr get" }
+func (prGetCmd) Summary() string {
+	return "print one pull request as JSON (usage: pr get N; alias of pr view)"
+}
+func (prGetCmd) RequiresAPI() bool { return true }
+
+func (prGetCmd) Run(args []string, ctx *cli.Ctx) error {
+	return runPRGet(args, ctx, "pr get")
+}
 
 func (prGetCmd) HelpPage() string {
 	return `use: forge pr get N
 
-Print one pull request as JSON. N is the PR number.`
+Print one pull request as JSON. N is the PR number. pr get is a
+compatibility alias; the canonical spelling is forge pr view N. Both
+print the same JSON.`
 }
+
+// ---- pr list ----
 
 type prListCmd struct{}
 
@@ -207,7 +236,7 @@ forge pr pull N to download the conversation.`
 // PRCommands returns the pr subcommands for registration in main.
 func PRCommands() []cli.Command {
 	return []cli.Command{
-		prCreateCmd{}, createBatchCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
+		prCreateCmd{}, createBatchCmd{}, prViewCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
 		reviewListCmd{}, reviewSubmitCmd{}, reviewFlagsCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
 		commentAddCmd{kind: "pr", gh: true}, commentAddCmd{kind: "pr"},
