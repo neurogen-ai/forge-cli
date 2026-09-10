@@ -56,20 +56,6 @@ func writeJSON(w interface{ Write([]byte) (int, error) }, v any) error {
 	return enc.Encode(v)
 }
 
-// stripFlag removes all occurrences of "--name value" from args so positional
-// arguments can be parsed independently of flags.
-func stripFlag(args []string, name string) []string {
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		if args[i] == name && i+1 < len(args) {
-			i++
-			continue
-		}
-		out = append(out, args[i])
-	}
-	return out
-}
-
 // stripFlags removes every "--name value" pair for the named flags from args,
 // preserving the order of the remaining arguments. A named flag with no
 // following token consumes nothing. Call sites list only their value-taking

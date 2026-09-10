@@ -31,7 +31,7 @@ type ReviewRow struct {
 }
 
 func (reviewListCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr review list")
+	n, err := parseIndex(stripFlags(args, "--state"), "pr review list")
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func reviewEvent(state, body string) (string, error) {
 }
 
 func (reviewSubmitCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr review submit")
+	n, err := parseIndex(stripFlags(args, "--state", "--body"), "pr review submit")
 	if err != nil {
 		return err
 	}

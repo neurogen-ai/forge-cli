@@ -25,7 +25,7 @@ type CommentReceipt struct {
 }
 
 func (c commentAddCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, c.Name())
+	n, err := parseIndex(stripFlags(args, "--body"), c.Name())
 	if err != nil {
 		return err
 	}

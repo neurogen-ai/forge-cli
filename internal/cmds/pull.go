@@ -106,7 +106,7 @@ func unresolvedCount(reviews []PRCacheReview) int {
 }
 
 func (c pullCmd) Run(args []string, ctx *cli.Ctx) error {
-	positional := stripFlag(args, "--dir")
+	positional := stripFlags(args, "--dir")
 	n, err := parseIndex(positional, c.kind+" pull")
 	if err != nil {
 		return err
