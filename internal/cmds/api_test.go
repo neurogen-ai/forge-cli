@@ -206,3 +206,86 @@ func TestAPIPassthroughErrors(t *testing.T) {
 		t.Fatal("extra positional arg must fail")
 	}
 }
+
+// writeFakeJQ writes an executable "jq" script into dir and prepends dir to
+// PATH for the test. The script must read stdin and write stdout/stderr.
+func writeFakeJQ(t *testing.T, dir, script string) {
+	t.Helper()
+	path := filepath.Join(dir, "jq")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestRunJQSuccess(t *testing.T) {
+	// Fake jq passes stdin through after echoing a marker to stderr.
+	writeFakeJQ(t, t.TempDir(), "echo 'jq ran' >&2\nwhile IFS= read -r line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\"; done\n")
+	var out, errOut bytes.Buffer
+	if err := runJQ(&out, &errOut, ".a", []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != `{"a":1}`+"\n" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+}
+
+func TestRunJQFilterIsOneArgvElement(t *testing.T) {
+	// A filter containing spaces and metacharacters must arrive as one
+	// argument, not through any shell evaluation.
+	writeFakeJQ(t, t.TempDir(), `printf '%s\n' "$1"`)
+	var out, errOut bytes.Buffer
+	filter := `.x | select(.y == "a b; rm -rf /")`
+	if err := runJQ(&out, &errOut, filter, nil); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != filter+"\n" {
+		t.Fatalf("jq received %q, want the filter as one argv element", out.String())
+	}
+}
+
+func TestRunJQMissingBinary(t *testing.T) {
+	t.Setenv("PATH", "")
+	var out, errOut bytes.Buffer
+	err := runJQ(&out, &errOut, ".", []byte(`{}`))
+	e, ok := err.(*cli.Error)
+	if !ok || e.Code != cli.ExitUsage {
+		t.Fatalf("missing jq err = %v, want usage", err)
+	}
+	if !strings.Contains(e.Hint, "jq") {
+		t.Fatalf("hint = %q, want an install hint", e.Hint)
+	}
+	if out.Len() != 0 || errOut.Len() != 0 {
+		t.Fatalf("nothing should be written on missing jq, got %q %q", out.String(), errOut.String())
+	}
+}
+
+func TestRunJQFailedFilter(t *testing.T) {
+	writeFakeJQ(t, t.TempDir(), "echo 'syntax bad' >&2\nexit 3\n")
+	var out, errOut bytes.Buffer
+	err := runJQ(&out, &errOut, ".bad", []byte(`{}`))
+	e, ok := err.(*cli.Error)
+	if !ok || e.Code != cli.ExitRuntime {
+		t.Fatalf("failed filter err = %v, want runtime", err)
+	}
+	if errOut.String() != "syntax bad\n" {
+		t.Fatalf("jq stderr not preserved, got %q", errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed filter wrote stdout %q", out.String())
+	}
+}
+
+func TestAPIPassthroughJQEndToEnd(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"name":"forge"}`))
+	})
+	ctx := testCtx(ts)
+	if err := (apiCmd{}).Run([]string{"repos/o/r", "--jq", ".name"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ctx.Stdout.(*bytes.Buffer).String(); got != "\"forge\"\n" {
+		t.Fatalf("jq output = %q", got)
+	}
+}

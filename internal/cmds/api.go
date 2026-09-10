@@ -1,11 +1,13 @@
 package cmds
 
 import (
+	"bytes"
 	"encoding/json"
 	"forge/internal/cli"
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -24,8 +26,12 @@ func (apiCmd) HelpPage() string {
 Send one authenticated request to <host>/api/v1<path> and print the response
 body. The path is relative to the API root; a leading slash is optional.
 Absolute http(s) URLs are rejected: the request always goes to the configured
-host. --method defaults to GET. --q is repeatable and order-preserving.
---input takes inline JSON, @file, or - for stdin.
+host, so the token is never sent anywhere you did not point forge at.
+
+--method defaults to GET. --q is repeatable and order-preserving. --input
+takes inline JSON, @file, or - for stdin. With --jq the JSON response is
+piped through the system jq with your filter as a single argument; the shell
+is never involved, and jq's own errors are passed through.
 
 The request carries your forge token. Only send paths you mean to send it to.
 `
@@ -47,7 +53,11 @@ func (c apiCmd) Run(args []string, ctx *cli.Ctx) error {
 		return err
 	}
 	queries := flagValues(args, "--q")
-	rest := stripFlags(args, "--method", "--input", "--q")
+	jqFilter, args, err := c.stringFlag(args, "--jq")
+	if err != nil {
+		return err
+	}
+	rest := stripFlags(args, "--method", "--input", "--q", "--jq")
 	if len(rest) != 1 {
 		return &cli.Error{
 			Code: cli.ExitUsage,
@@ -83,6 +93,9 @@ func (c apiCmd) Run(args []string, ctx *cli.Ctx) error {
 	resp, err := ctx.API.DoRaw(strings.ToUpper(method), path, query, body)
 	if err != nil {
 		return mapErr(err)
+	}
+	if jqFilter != "" {
+		return runJQ(ctx.Stdout, ctx.Stderr, jqFilter, resp.Body)
 	}
 	return writeAPIResponse(ctx.Stdout, resp.ContentType, resp.Body)
 }
@@ -146,6 +159,39 @@ func flagValues(args []string, name string) []string {
 		}
 	}
 	return out
+}
+
+// runJQ pipes body through the system jq with filter as one argv element;
+// there is no shell anywhere in this path. A missing jq binary is a usage
+// error with an install hint. A non-zero jq exit is a runtime error whose
+// hint preserves jq's stderr; jq's stdout is not written on failure.
+func runJQ(out, errOut io.Writer, filter string, body []byte) error {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  "--jq requires the jq binary, which was not found on PATH",
+			Hint: "install jq (https://jqlang.github.io/jq/download/), or drop --jq to print the raw response",
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(jq, filter) // filter is one argv element; no shell
+	cmd.Stdin = bytes.NewReader(body)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_, _ = errOut.Write(stderr.Bytes())
+		if _, ok := err.(*exec.ExitError); ok {
+			return &cli.Error{
+				Code: cli.ExitRuntime,
+				Msg:  "--jq: filter failed",
+				Hint: strings.TrimRight(stderr.String(), "\n"),
+			}
+		}
+		return &cli.Error{Code: cli.ExitRuntime, Msg: "--jq: " + err.Error()}
+	}
+	_, err = out.Write(stdout.Bytes())
+	return err
 }
 
 // isJSONMediaType reports whether a Content-Type header names JSON, tolerating
