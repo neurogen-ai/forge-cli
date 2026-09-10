@@ -1,8 +1,55 @@
 # forge-cli
 
-A command-line client for Forgejo pull requests and issues. Reads repo context
+forge is a gh-style CLI for Forgejo. The command surface follows gh's
+design — `pr view`, `pr comment`, `pr review --approve`, `pr checkout`, `api`
+— so a developer who knows gh can use forge without reading the manual, and
+existing spellings (`pr get`, `pr comment add`, `pr review submit --state`)
+stay as compatibility aliases with unchanged receipts. Reads repo context
 from your git remote, auth from your git credential helper, and writes JSON to
 stdout so scripts can parse it.
+
+## gh to forge
+
+| gh | forge |
+|---|---|
+| `gh pr list` | `forge pr list` |
+| `gh pr view N` | `forge pr view N` (`pr get` is the compatibility alias) |
+| `gh pr diff N` | `forge pr diff N` |
+| `gh pr comment N --body T` | `forge pr comment N --body T` (`pr comment add` stays registered) |
+| `gh pr review N --approve` / `--request-changes` / `--comment` | `forge pr review N --approve\|--request-changes\|--comment [--body T]` (`pr review submit --state S` stays registered) |
+| `gh pr merge N --squash` | `forge pr merge N --squash` |
+| `gh pr checkout N` | `forge pr checkout N [--branch B]` |
+| `gh api PATH` | `forge api PATH` |
+
+Index placement follows gh too: `forge pr merge 11 --merge` and
+`forge pr merge --merge 11` both work on every command that takes a PR
+number.
+
+`forge api <path> [--method M] [--input @file\|JSON\|-] [--q k=v]... [--jq Q]`
+is the escape hatch when a command is missing: it sends the authenticated
+request to the configured host's API and prints the response, JSON
+pretty-printed when the response is JSON, byte-exact otherwise. The auth
+header goes wherever you send the request, so scope paths accordingly.
+
+### An agent skill for forge
+
+Six commands cover the review lifecycle, and they behave the same from a
+fresh clone with only `FORGE_TOKEN` set: `pr list` to find a PR, `pr view`
+to read it, `pr diff` for the patch, `pr comment` to post (including
+anchored inline comments with `--file`/`--line`/`--side`), `pr review` to
+approve or request changes, and `pr merge` to land it. Everything prints
+JSON when stdout is not a terminal, errors carry an actionable hint on
+stderr, and no step prompts.
+
+```sh
+forge pr list --state open
+forge pr view 7
+forge pr diff 7
+forge pr comment 7 --body "checked, one nit below"
+forge pr comment 7 --file main.go --line 42 --side new --body "this leaks the conn"
+forge pr review 7 --request-changes --body "nits on line 42"
+forge pr merge 7 --squash
+```
 
 ## Install
 
@@ -83,7 +130,10 @@ Passing both `--json` and `-t` together is a conflict and exits 2 with a usage
 error.
 
 Receipts — the JSON objects printed by mutating commands like `pr comment
-resolve` and `pr pull` — are always JSON, whatever flags are passed.
+resolve` and `pr pull` — are always JSON, whatever flags are passed. The
+full contract: JSON goes to stdout, diagnostics and errors go to stderr,
+and receipts are always JSON on stdout even when the command also prints a
+table in a terminal.
 
 ### Help
 
@@ -96,20 +146,28 @@ Help goes to stdout and exits 0; errors keep stderr and their exit code.
 
 ```
 forge pr create --title "T" [--head B] [--base B] [--body TEXT]
-forge pr get N
+forge pr view N
 forge pr list [--state open|closed|all] [--page N] [--limit M]
 forge pr conv N [--all] [--min-unresolved N]
 forge pr create-batch PATTERN [--base B] [--body TEXT] [--yes]
 forge pr edit N [--title T] [--body B]
 forge pr browse N [--open]
 forge pr review submit N --state approve|request-changes|comment [--body T]
+forge pr review N --approve|--request-changes|--comment [--body T]
 forge pr comment add N --body T
+forge pr comment N --body T [--file P --line L [--side old|new]]
+forge pr checkout N [--branch B]
 forge pr close N
 forge pr reopen N
 forge pr ready N
 forge pr diff N [--patch] [--out]
 forge pr merge N --merge|--squash|--rebase [--subject S] [--body T] [--delete]
 ```
+
+`pr view` is the canonical spelling of the single-PR read; `pr get` is the
+compatibility alias and prints the same JSON. `pr comment` and `pr review`
+with flags are the gh-spelled forms; the older `comment add` and
+`review submit --state` spellings stay and print the same receipts.
 
 `pr create` defaults `--head` to the current branch and `--base` to the
 configured base. If no base can be determined it fails asking for `--base`.
@@ -234,8 +292,11 @@ hidden:
 {"index": 42, "action": "merge", "head_deleted": false}
 ```
 
-Future work, not shipped: the `forge api` passthrough and `forge search`
-(v0.5.0) and an auto-sync service (v0.8.0) — see `plans/releases/`.
+Future work, not shipped: `forge search`
+(v0.6.0) and an auto-sync service (v0.8.0) — see `plans/releases/`.
+`forge api PATH [--method M] [--input @file|JSON|-] [--q k=v]... [--jq Q]`
+is shipped: it sends the path under the configured host's `/api/v1` base and
+prints the response, JSON pretty-printed, anything else byte-exact.
 
 ### Resolution
 
@@ -391,16 +452,18 @@ Exit code always comes from the original error.
 
 ## Exit codes
 
-See `plans/PRD.md` section 10 for details.
+Matched line for line to the constants in `internal/cli/exit.go`
+(`ExitOK`, `ExitRuntime`, `ExitUsage`, `ExitContext`, `ExitAuth`,
+`ExitNetwork`):
 
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 1 | runtime / API error |
-| 2 | usage error (bad flags, missing required values, flag conflicts such as `--json` with `-t`) |
-| 3 | context error (not in a repo, no remote) |
-| 4 | auth error (no token, rejected token) |
-| 5 | network error (timeout, connection failure) |
+| 1 | API/runtime error |
+| 2 | bad flags / missing value |
+| 3 | not in repo / no remote |
+| 4 | no token / rejected |
+| 5 | timeout / conn failure |
 
 Errors go to stderr with an actionable hint. Server error messages are surfaced
 verbatim with their HTTP status.
