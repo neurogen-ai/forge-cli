@@ -67,6 +67,7 @@ func Run(argv []string, reg *Registry, base *Ctx) int {
 	ctx := &Ctx{
 		Stdout:   base.Stdout,
 		Stderr:   base.Stderr,
+		Stdin:    base.Stdin,
 		Diagnose: base.Diagnose,
 	}
 	ctx.GlobalFlags = GlobalFlags{TimeoutSeconds: 0} // unset here; config layer owns the default (30s)
