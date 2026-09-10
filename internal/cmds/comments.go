@@ -48,10 +48,21 @@ func (c commentAddCmd) run(args []string, ctx *cli.Ctx) error {
 		return &cli.Error{
 			Code: cli.ExitUsage,
 			Msg:  c.Name() + ": --body is required",
-			Hint: "pass the comment text with --body",
+			Hint: "pass the comment text with --body, or pipe it with --body -",
 		}
 	}
-	comment, err := ctx.API.AddComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, body)
+	data, err := readDashInput(body, ctx.Stdin)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  c.Name() + ": --body is required",
+			Hint: "piped stdin for --body - was empty; pass the comment text with --body",
+		}
+	}
+	comment, err := ctx.API.AddComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, string(data))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -68,6 +79,7 @@ func (c commentAddCmd) HelpPage() string {
 
 Add one comment to %[3]s N and print a JSON receipt {id, html_url}.
 --body is required; an empty body is a usage error before any request.
+--body - reads the comment text from stdin.
 "%[1]s" is the canonical spelling; "%[2]s" is a compatibility alias with
 the same receipt.
 

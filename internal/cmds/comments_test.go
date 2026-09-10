@@ -184,3 +184,72 @@ func TestCommentVerbDispatch(t *testing.T) {
 		t.Errorf("receipt = %+v", rc)
 	}
 }
+
+// "--body -" reads the comment text from ctx.Stdin for both comment kinds;
+// a "-" with no stdin, or an empty piped body, is a usage error before any
+// request.
+func TestCommentBodyFromStdin(t *testing.T) {
+	cases := []struct {
+		cmd   commentAddCmd
+		path  string
+		stdin string
+	}{
+		{commentAddCmd{kind: "pr", gh: true}, "/api/v1/repos/o/r/issues/9/comments", "piped body\n"},
+		{commentAddCmd{kind: "issue"}, "/api/v1/repos/o/r/issues/9/comments", "issue piped"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd.Name(), func(t *testing.T) {
+			var gotPath, gotBody string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				raw, _ := io.ReadAll(r.Body)
+				gotBody = string(raw)
+				fmt.Fprint(w, `{"id":77,"html_url":"u"}`)
+			}))
+			defer ts.Close()
+			ctx := testCtxStdin(ts, strings.NewReader(tc.stdin))
+			if err := tc.cmd.Run([]string{"9", "--body", "-"}, ctx); err != nil {
+				t.Fatal(err)
+			}
+			if gotPath != tc.path {
+				t.Errorf("path = %q want %q", gotPath, tc.path)
+			}
+			want, _ := json.Marshal(map[string]string{"body": tc.stdin})
+			if gotBody != string(want) {
+				t.Errorf("body = %s want %s", gotBody, want)
+			}
+		})
+	}
+}
+
+func TestCommentStdinErrorsBeforeRequest(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		stdin io.Reader
+	}{
+		{"dash with nil stdin", []string{"7", "--body", "-"}, nil},
+		{"dash with empty stdin", []string{"7", "--body", "-"}, strings.NewReader("")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+			}))
+			defer ts.Close()
+			ctx := testCtxStdin(ts, tc.stdin)
+			err := (commentAddCmd{kind: "pr"}).Run(tc.args, ctx)
+			cerr, ok := err.(*cli.Error)
+			if !ok {
+				t.Fatalf("err = %v, want *cli.Error", err)
+			}
+			if cerr.Code != cli.ExitUsage {
+				t.Errorf("code = %d want %d", cerr.Code, cli.ExitUsage)
+			}
+			if hits != 0 {
+				t.Errorf("validation sent %d requests, want 0", hits)
+			}
+		})
+	}
+}
