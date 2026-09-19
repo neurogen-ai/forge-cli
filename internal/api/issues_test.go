@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -342,5 +343,79 @@ func TestRemoveLabelAPIError(t *testing.T) {
 	}
 	if apiErr.Status != 404 || apiErr.Message != "label does not exist" {
 		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestLockIssue(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		if len(raw) > 0 {
+			json.NewDecoder(bytes.NewReader(raw)).Decode(&gotBody)
+		}
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).LockIssue("o", "r", 7, "off-topic"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/issues/7/lock" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody["reason"] != "off-topic" {
+		t.Errorf("body = %v, want reason off-topic", gotBody)
+	}
+}
+
+func TestLockIssueNoReasonSendsNoBody(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).LockIssue("o", "r", 7, ""); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != "" {
+		t.Errorf("body = %q, want empty", gotBody)
+	}
+}
+
+func TestLockIssueAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"lock not supported"}`))
+	}))
+	defer ts.Close()
+
+	err := newTestClient(ts).LockIssue("o", "r", 7, "x")
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 403 || apiErr.Message != "lock not supported" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
+func TestUnlockIssue(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).UnlockIssue("o", "r", 7); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" || gotPath != "/api/v1/repos/o/r/issues/7/lock" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
 	}
 }
