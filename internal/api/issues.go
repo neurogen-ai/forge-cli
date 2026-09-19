@@ -127,6 +127,49 @@ func (c *Client) ListLabels(owner, repo string) ([]Label, error) {
 	return out, nil
 }
 
+// CreateLabelInput is the POST /repos/{owner}/{repo}/labels body. The
+// server owns name and color validation.
+type CreateLabelInput struct {
+	Name        string `json:"name"`
+	Color       string `json:"color,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// UpdateLabelInput is the PATCH /repos/{owner}/{repo}/labels/{id} body.
+// Absent (zero) fields stay untouched via omitempty.
+type UpdateLabelInput struct {
+	Name        string `json:"name,omitempty"`
+	Color       string `json:"color,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// CreateLabel creates a repository label and returns the server's echo.
+func (c *Client) CreateLabel(owner, repo, name, color, description string) (*Label, error) {
+	var lbl Label
+	in := CreateLabelInput{Name: name, Color: color, Description: description}
+	path := fmt.Sprintf("/repos/%s/%s/labels", owner, repo)
+	if err := c.Do("POST", path, nil, in, &lbl); err != nil {
+		return nil, err
+	}
+	return &lbl, nil
+}
+
+// EditLabel patches one label and returns the server's updated echo.
+func (c *Client) EditLabel(owner, repo string, id int64, in UpdateLabelInput) (*Label, error) {
+	var lbl Label
+	path := fmt.Sprintf("/repos/%s/%s/labels/%d", owner, repo, id)
+	if err := c.Do("PATCH", path, nil, in, &lbl); err != nil {
+		return nil, err
+	}
+	return &lbl, nil
+}
+
+// DeleteLabel removes one label. Success has no body.
+func (c *Client) DeleteLabel(owner, repo string, id int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/labels/%d", owner, repo, id)
+	return c.Do("DELETE", path, nil, nil, nil)
+}
+
 // LabelIDsInput is the POST /repos/{owner}/{repo}/issues/{index}/labels body.
 type LabelIDsInput struct {
 	Labels []int64 `json:"labels"`

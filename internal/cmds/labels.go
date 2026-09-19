@@ -166,6 +166,9 @@ func (c issueLabelCmd) Run(args []string, ctx *cli.Ctx) error {
 func LabelCommands() []cli.Command {
 	return []cli.Command{
 		labelListCmd{},
+		labelCreateCmd{},
+		labelEditCmd{},
+		labelDeleteCmd{},
 		issueLabelCmd{adding: true},
 		issueLabelCmd{adding: false},
 	}

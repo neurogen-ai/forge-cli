@@ -344,3 +344,106 @@ func TestRemoveLabelAPIError(t *testing.T) {
 		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
+
+func TestCreateLabel(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(Label{ID: 9, Name: "triage", Color: "#00aabb"})
+	}))
+	defer ts.Close()
+
+	lbl, err := newTestClient(ts).CreateLabel("o", "r", "triage", "#00aabb", "needs triage first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/labels" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody["name"] != "triage" || gotBody["color"] != "#00aabb" || gotBody["description"] != "needs triage first" {
+		t.Errorf("body = %v", gotBody)
+	}
+	if lbl.ID != 9 || lbl.Name != "triage" || lbl.Color != "#00aabb" {
+		t.Errorf("label = %+v", lbl)
+	}
+}
+
+func TestEditLabel(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(Label{ID: 9, Name: "renamed", Color: "#ff0000"})
+	}))
+	defer ts.Close()
+
+	lbl, err := newTestClient(ts).EditLabel("o", "r", 9, UpdateLabelInput{Name: "renamed", Color: "#ff0000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PATCH" || gotPath != "/api/v1/repos/o/r/labels/9" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody["name"] != "renamed" || gotBody["color"] != "#ff0000" {
+		t.Errorf("body = %v", gotBody)
+	}
+	if lbl.Name != "renamed" {
+		t.Errorf("label = %+v", lbl)
+	}
+}
+
+func TestEditLabelOmitsZeroFields(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(Label{ID: 9})
+	}))
+	defer ts.Close()
+
+	if _, err := newTestClient(ts).EditLabel("o", "r", 9, UpdateLabelInput{Color: "#123456"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gotBody["name"]; ok {
+		t.Errorf("name sent for zero field: %v", gotBody)
+	}
+	if gotBody["color"] != "#123456" {
+		t.Errorf("body = %v", gotBody)
+	}
+}
+
+func TestDeleteLabel(t *testing.T) {
+	var gotPath, gotMethod string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(204)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).DeleteLabel("o", "r", 9); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" || gotPath != "/api/v1/repos/o/r/labels/9" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+}
+
+func TestDeleteLabelAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"label does not exist"}`))
+	}))
+	defer ts.Close()
+
+	err := newTestClient(ts).DeleteLabel("o", "r", 9)
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("err = %T, want *APIError", err)
+	}
+	if apiErr.Status != 404 || apiErr.Message != "label does not exist" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
