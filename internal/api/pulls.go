@@ -42,6 +42,86 @@ func (c *Client) SubmitReview(owner, repo string, index int, in SubmitReviewInpu
 	return &rev, nil
 }
 
+// ReviewCommentInput is one inline comment entry in a review comment payload.
+// The encoding is the documented Gitea/Forgejo shape (plan contract skeleton,
+// probe candidate "line-num"); anchorToWire in cmds is the only writer.
+// NOTE(owner decision, F2): the F1 probe could not run against a live
+// instance, so this encoding ships unconfirmed; see plans/releases/v0.5.0.md.
+type ReviewCommentInput struct {
+	Path       string `json:"path"`
+	Body       string `json:"body"`
+	OldLineNum int64  `json:"old_line_num,omitempty"`
+	NewLineNum int64  `json:"new_line_num,omitempty"`
+}
+
+// CreateAnchoredCommentInput posts one COMMENT review whose content is a
+// single inline comment entry. Event is fixed to COMMENT here so callers
+// cannot post APPROVED/REQUEST_CHANGES through the comment transport.
+type CreateAnchoredCommentInput struct {
+	Body     string               `json:"body"`
+	Comments []ReviewCommentInput `json:"comments"`
+}
+
+// reviewCommentWire is the request body for the anchored-comment transport:
+// one COMMENT review carrying inline comment entries. Separate from
+// SubmitReviewInput because the comments field only exists on this shape.
+type reviewCommentWire struct {
+	Event    string               `json:"event"`
+	Body     string               `json:"body,omitempty"`
+	Comments []ReviewCommentInput `json:"comments"`
+}
+
+// reviewWithComments decodes the POST /reviews response, which is a review
+// whose comments array carries the created inline entries on servers that
+// echo them back.
+type reviewWithComments struct {
+	Review
+	Comments []ReviewComment `json:"comments"`
+}
+
+// CreateAnchoredComment posts one COMMENT review carrying a single inline
+// comment entry and returns the created review comment.
+func (c *Client) CreateAnchoredComment(owner, repo string, index int, in CreateAnchoredCommentInput) (*ReviewComment, error) {
+	var resp reviewWithComments
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, index)
+	body := reviewCommentWire{Event: "COMMENT", Body: in.Body, Comments: in.Comments}
+	if err := c.Do("POST", path, nil, body, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Comments) > 0 {
+		return &resp.Comments[0], nil
+	}
+	// Some servers return the review without echoing the comments array;
+	// rebuild the entry from what was asked for so receipts stay honest.
+	in0 := ReviewCommentInput{}
+	if len(in.Comments) > 0 {
+		in0 = in.Comments[0]
+	}
+	return &ReviewComment{ID: resp.ID, Body: in0.Body, Path: in0.Path}, nil
+}
+
+// AnchorToWire maps --file/--line/--side(old|new) onto the wire encoding the
+// contract documents. A side of "" means the new line. It is the only place
+// the wire encoding lives, so gh-shaped flags stay put across encoding drift.
+func AnchorToWire(file string, line int64, side string) (ReviewCommentInput, error) {
+	if file == "" {
+		return ReviewCommentInput{}, fmt.Errorf("--file is required")
+	}
+	if line <= 0 {
+		return ReviewCommentInput{}, fmt.Errorf("--line must be a positive line number")
+	}
+	in := ReviewCommentInput{Path: file, Body: ""}
+	switch side {
+	case "", "new":
+		in.NewLineNum = line
+	case "old":
+		in.OldLineNum = line
+	default:
+		return ReviewCommentInput{}, fmt.Errorf("--side must be old or new, not %q", side)
+	}
+	return in, nil
+}
+
 // GetPullRequest fetches one pull request by index.
 func (c *Client) GetPullRequest(owner, repo string, index int) (*PullRequest, error) {
 	var pr PullRequest
