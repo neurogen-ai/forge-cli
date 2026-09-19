@@ -51,6 +51,11 @@ type PullRequest struct {
 	// RequestedReviewers is the server's review-request list; F's edit verb
 	// and K's status section read it. Absent when the instance sends none.
 	RequestedReviewers []User `json:"requested_reviewers,omitempty"`
+
+	// Assignees is the server's assignee list; K's "PRs assigned to you"
+	// dashboard section reads it. Forgejo serves it on every pulls payload;
+	// absent when the instance sends none.
+	Assignees []User `json:"assignees,omitempty"`
 }
 
 // Issue models issue payloads. PullRequestBody is non-nil exactly when the
