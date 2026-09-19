@@ -157,15 +157,30 @@ func git(dir string, args ...string) (string, error) {
 // FetchSHA fetches ref from url into the repository at root and returns the
 // SHA the fetch resolved to. It is the local-git half of pr checkout: the
 // only network access happens through git's own transport, never through
-// the Forgejo client. Failure modes come from the shared git() contract
-// ("not inside a git repository", or "git fetch: <stderr>").
+// the Forgejo client. A bare ref name is fetched as its full refspec
+// refs/heads/<ref>, so a tag sharing the branch's name can never shadow it
+// (git's dwim rules would prefer the tag). Failure modes come from the
+// shared git() contract ("not inside a git repository", or
+// "git fetch: <stderr>").
 func FetchSHA(root, url, ref string) (string, error) {
-	if _, err := git(root, "fetch", "--no-tags", url, ref); err != nil {
+	spec := ref
+	if !strings.HasPrefix(spec, "refs/") {
+		spec = "refs/heads/" + ref
+	}
+	if _, err := git(root, "fetch", "--no-tags", url, spec); err != nil {
 		return "", err
 	}
 	// FETCH_HEAD names the last fetched ref; with a single refspec that is
 	// exactly the requested ref's tip.
 	return git(root, "rev-parse", "FETCH_HEAD")
+}
+
+// LocalBranchExists reports whether a local branch named branch exists at
+// root. Used by pr checkout to refuse an existing branch before any
+// network fetch, instead of after.
+func LocalBranchExists(root, branch string) bool {
+	_, err := git(root, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
 }
 
 // CheckoutDetached checks out sha with HEAD detached. A dirty worktree that
@@ -177,7 +192,8 @@ func CheckoutDetached(root, sha string) error {
 }
 
 // CreateBranchAt creates local branch branch pointing at sha. An existing
-// branch is a git refusal, not an overwrite.
+// branch is a git refusal, not an overwrite; pr checkout pre-checks with
+// LocalBranchExists so the refusal comes before the fetch.
 func CreateBranchAt(root, branch, sha string) error {
 	_, err := git(root, "branch", branch, sha)
 	return err

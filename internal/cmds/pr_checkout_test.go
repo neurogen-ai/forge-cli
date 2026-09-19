@@ -252,3 +252,51 @@ func TestPRCheckoutNoOrigin(t *testing.T) {
 		t.Errorf("error = %v, want exit-code 3 repo-context error", err)
 	}
 }
+
+func TestPRCheckoutSHAMismatch(t *testing.T) {
+	checkoutRequireGit(t)
+	src, _ := setupPRSource(t)
+	root := t.TempDir()
+	initCheckoutRepo(t, root, src)
+	start := headSHA(t, root)
+
+	// The API reports a head sha that differs from the branch tip git would
+	// actually fetch: pr checkout must refuse, not check out the wrong commit.
+	payload := fmt.Sprintf(`{"number":7,"head":{"ref":"feature","sha":"%064d","repo":null}}`, 1)
+	_, ctx := checkoutPRServer(t, root, src, payload)
+
+	err := (prCheckoutCmd{}).Run([]string{"7"}, ctx)
+	if err == nil {
+		t.Fatal("pr checkout with mismatched head sha: want error, got nil")
+	}
+	cliErr, ok := err.(*cli.Error)
+	if !ok || cliErr.Code != cli.ExitRuntime {
+		t.Errorf("error = %v, want exit-code 1 runtime error", err)
+	}
+	if got := headSHA(t, root); got != start {
+		t.Errorf("HEAD moved to %s on a mismatched checkout; want it untouched", got)
+	}
+}
+
+func TestPRCheckoutExistingBranchRefusedBeforeFetch(t *testing.T) {
+	checkoutRequireGit(t)
+	_, sha := setupPRSource(t)
+	root := t.TempDir()
+	initCheckoutRepo(t, root, "/nonexistent/forge-remote") // fetch would fail
+	cmd := exec.Command("git", "branch", "pr-7", "HEAD")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git branch pr-7: %v: %s", err, out)
+	}
+
+	payload := fmt.Sprintf(`{"number":7,"head":{"ref":"feature","sha":%q,"repo":null}}`, sha)
+	_, ctx := checkoutPRServer(t, root, "/nonexistent/forge-remote", payload)
+
+	err := (prCheckoutCmd{}).Run([]string{"--branch", "pr-7", "7"}, ctx)
+	if err == nil {
+		t.Fatal("pr checkout over an existing local branch: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error = %v, want the branch-exists refusal (before any fetch)", err)
+	}
+}

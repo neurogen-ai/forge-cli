@@ -43,14 +43,24 @@ rest is local git, which refuses to overwrite uncommitted local state.`
 
 // headFetchURL resolves where the PR head lives: the head repository's
 // clone URL for a cross-repo head, the local origin for a same-repo head.
+// An instance that reports head.repo without a clone_url falls back to the
+// local origin, which still serves same-repo heads.
 func headFetchURL(pr *api.PullRequest, originURL string) (string, error) {
 	if pr.Head.Repo != nil && pr.Head.Repo.CloneURL != "" {
 		return pr.Head.Repo.CloneURL, nil
 	}
-	if pr.Head.Repo == nil && originURL != "" {
+	if originURL != "" {
 		return originURL, nil
 	}
 	return "", fmt.Errorf("pull request head has no fetchable repository")
+}
+
+// short abbreviates a sha for error messages; a full sha passes through.
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 func (prCheckoutCmd) Run(args []string, ctx *cli.Ctx) error {
@@ -65,10 +75,10 @@ func (prCheckoutCmd) Run(args []string, ctx *cli.Ctx) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if pr.Head.Ref == "" && pr.Head.Sha == "" {
+	if pr.Head.Ref == "" {
 		return &cli.Error{
 			Code: cli.ExitRuntime,
-			Msg:  fmt.Sprintf("pull request %d has no head to check out", n),
+			Msg:  fmt.Sprintf("pull request %d has no head branch to fetch", n),
 			Hint: "the PR may be closed with its branch deleted, or the instance omitted head metadata",
 		}
 	}
@@ -85,9 +95,27 @@ func (prCheckoutCmd) Run(args []string, ctx *cli.Ctx) error {
 		}
 	}
 
+	if hasBranch && gitctx.LocalBranchExists(root, branch) {
+		return &cli.Error{
+			Code: cli.ExitRuntime,
+			Msg:  fmt.Sprintf("local branch %q already exists", branch),
+			Hint: "choose another name or delete the branch; forge never overwrites an existing branch",
+		}
+	}
+
 	sha, ferr := gitctx.FetchSHA(root, url, pr.Head.Ref)
 	if ferr != nil {
 		return mapErr(ferr)
+	}
+	// Git's dwim rules could have resolved the ref to something other than
+	// the PR head (the API's sha is the truth); refuse to check out or
+	// report anything else.
+	if pr.Head.Sha != "" && sha != pr.Head.Sha {
+		return &cli.Error{
+			Code: cli.ExitRuntime,
+			Msg:  fmt.Sprintf("fetched %s but the pull request head is %s", short(sha), short(pr.Head.Sha)),
+			Hint: "the head branch may have moved since the PR was read; re-run the command or check out the head commit explicitly",
+		}
 	}
 
 	receipt := CheckoutReceipt{Number: int64(n), HeadSHA: sha}

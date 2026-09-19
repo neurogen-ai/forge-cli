@@ -65,6 +65,26 @@ func TestFetchSHAOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestFetchSHATagDoesNotShadowBranch(t *testing.T) {
+	requireGit(t)
+	remote := t.TempDir()
+	local := t.TempDir()
+	initRepo(t, remote, "")
+	initRepo(t, local, "")
+	run := gitRunner(t, remote)
+	run("tag", "feature") // a tag sharing the branch's name, at the base commit
+	run("checkout", "-b", "feature")
+	want := commitFile(t, remote, "feature.go", "branch\n")
+
+	got, err := FetchSHA(local, remote, "feature")
+	if err != nil {
+		t.Fatalf("FetchSHA: %v", err)
+	}
+	if got != want {
+		t.Errorf("FetchSHA = %s, want the branch tip %s (tag must not shadow)", got, want)
+	}
+}
+
 func TestFetchSHAUnknownRef(t *testing.T) {
 	requireGit(t)
 	remote := t.TempDir()
