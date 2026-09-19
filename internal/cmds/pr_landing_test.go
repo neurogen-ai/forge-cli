@@ -29,9 +29,17 @@ func TestPRGroupHelpText(t *testing.T) {
 	// already leads; "conversation" is a removed shim). Summaries may mention
 	// the word conversation (e.g. pr pull), so match entry names only.
 	idx := page[strings.Index(page, "Other pr commands:"):]
-	for _, bad := range []string{"\n  conv ", "\n  conversation "} {
+	for _, bad := range []string{"\n  conv ", "\n  conversation ", "\n  comment add ", "\n  review submit "} {
 		if strings.Contains(idx, bad) {
 			t.Errorf("index body contains entry %q:\n%s", bad, idx)
+		}
+	}
+
+	// The canonical gh-spelled verbs appear as their own rows (two trailing
+	// spaces disambiguate from the padded subcommand rows like "review list").
+	for _, want := range []string{"\n  comment  ", "\n  review  "} {
+		if !strings.Contains(idx, want) {
+			t.Errorf("index missing canonical row %q:\n%s", want, idx)
 		}
 	}
 
