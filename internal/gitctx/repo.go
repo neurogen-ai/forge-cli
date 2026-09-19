@@ -175,6 +175,16 @@ func FetchSHA(root, url, ref string) (string, error) {
 	return git(root, "rev-parse", "FETCH_HEAD")
 }
 
+// BranchHead resolves a local branch to its commit SHA through rev-parse
+// against refs/heads/<branch>, so a tag sharing the branch's name can never
+// shadow it. Failures come from the shared git() error contract; an unknown
+// branch surfaces git's "unknown revision" stderr as "git rev-parse: ...".
+// Used by pr sync-status to compare local and PR head SHAs; every git
+// subprocess stays in gitctx.
+func BranchHead(root, branch string) (string, error) {
+	return git(root, "rev-parse", "--verify", "refs/heads/"+branch)
+}
+
 // LocalBranchExists reports whether a local branch named branch exists at
 // root. Used by pr checkout to refuse an existing branch before any
 // network fetch, instead of after.
