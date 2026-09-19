@@ -152,6 +152,13 @@ func (c *Client) EditPullRequest(owner, repo string, index int, in EditPullInput
 	return c.patchPull(owner, repo, index, in)
 }
 
+// EditPullRequestFields patches arbitrary PR fields and returns the updated
+// pull request. It backs pr edit's explicit clearing, which sends empty
+// strings the omitempty tags on EditPullInput would drop.
+func (c *Client) EditPullRequestFields(owner, repo string, index int, fields any) (*PullRequest, error) {
+	return c.patchPull(owner, repo, index, fields)
+}
+
 // patchPull is the shared PATCH implementation for PR state fields.
 // Future PR edit fields can reuse this endpoint without duplicating
 // request construction or response decoding.
