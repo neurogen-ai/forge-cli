@@ -100,6 +100,7 @@ echo "-- notifications (mark-read probe uses a nonexistent id; nothing visible i
 probe "notifications GET" GET "$ROOT/notifications"
 probe "notifications all GET" GET "$ROOT/notifications?all=true"
 probe "notifications mark-one PUT" PUT "$ROOT/notifications/999999999"
+probe "notifications thread mark-one PUT" PUT "$ROOT/notifications/threads/999999999"
 probe "notifications mark-all PUT" PUT "$ROOT/notifications" '{}'
 probe "notifications mark-all POST" POST "$ROOT/notifications"
 
