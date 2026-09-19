@@ -356,14 +356,14 @@ func TestCreateLabel(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	lbl, err := newTestClient(ts).CreateLabel("o", "r", "triage", "#00aabb")
+	lbl, err := newTestClient(ts).CreateLabel("o", "r", "triage", "#00aabb", "needs triage first")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/labels" {
 		t.Errorf("got %s %s", gotMethod, gotPath)
 	}
-	if gotBody["name"] != "triage" || gotBody["color"] != "#00aabb" {
+	if gotBody["name"] != "triage" || gotBody["color"] != "#00aabb" || gotBody["description"] != "needs triage first" {
 		t.Errorf("body = %v", gotBody)
 	}
 	if lbl.ID != 9 || lbl.Name != "triage" || lbl.Color != "#00aabb" {

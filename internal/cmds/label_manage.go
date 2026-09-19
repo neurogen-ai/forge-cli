@@ -18,28 +18,30 @@ type labelCreateCmd struct{}
 
 func (labelCreateCmd) Name() string { return "label create" }
 func (labelCreateCmd) Summary() string {
-	return "create a repository label (usage: label create NAME [--color C])"
+	return "create a repository label (usage: label create NAME [--color C] [--desc D])"
 }
 func (labelCreateCmd) RequiresAPI() bool { return true }
 
 func (labelCreateCmd) HelpPage() string {
-	return `use: forge label create NAME [--color C]
+	return `use: forge label create NAME [--color C] [--desc D]
 
 Create repository label NAME and print the created label JSON. Color is a
-hex string the server validates; the default is the server's.`
+hex string the server validates; the default is the server's. --desc sets
+the label description.`
 }
 
 func (labelCreateCmd) Run(args []string, ctx *cli.Ctx) error {
-	rest := stripFlags(args, "--color")
+	rest := stripFlags(args, "--color", "--desc")
 	if len(rest) != 1 {
 		return &cli.Error{
 			Code: cli.ExitUsage,
 			Msg:  "label create requires exactly one NAME",
-			Hint: "example: forge label create triage --color #00aabb",
+			Hint: "example: forge label create triage --color #00aabb --desc \"needs triage first\"",
 		}
 	}
 	color, _ := flagValue(args, "--color")
-	lbl, err := ctx.API.CreateLabel(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, rest[0], color)
+	desc, _ := flagValue(args, "--desc")
+	lbl, err := ctx.API.CreateLabel(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, rest[0], color, desc)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -52,20 +54,20 @@ type labelEditCmd struct{}
 
 func (labelEditCmd) Name() string { return "label edit" }
 func (labelEditCmd) Summary() string {
-	return "edit a repository label by name (usage: label edit NAME [--name N] [--color C])"
+	return "edit a repository label by name (usage: label edit NAME [--name N] [--color C] [--desc D])"
 }
 func (labelEditCmd) RequiresAPI() bool { return true }
 
 func (labelEditCmd) HelpPage() string {
-	return `use: forge label edit NAME [--name N] [--color C]
+	return `use: forge label edit NAME [--name N] [--color C] [--desc D]
 
 Edit repository label NAME (resolved by exact name match) and print the
 updated label JSON. Absent flags leave the field untouched. Color is a hex
-string the server validates.`
+string the server validates; --desc sets the description.`
 }
 
 func (labelEditCmd) Run(args []string, ctx *cli.Ctx) error {
-	rest := stripFlags(args, "--name", "--color")
+	rest := stripFlags(args, "--name", "--color", "--desc")
 	if len(rest) == 0 {
 		return &cli.Error{
 			Code: cli.ExitUsage,
@@ -83,6 +85,9 @@ func (labelEditCmd) Run(args []string, ctx *cli.Ctx) error {
 	}
 	if v, ok := flagValue(args, "--color"); ok {
 		in.Color = v
+	}
+	if v, ok := flagValue(args, "--desc"); ok {
+		in.Description = v
 	}
 	lbl, err := ctx.API.EditLabel(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, ids[0], in)
 	if err != nil {

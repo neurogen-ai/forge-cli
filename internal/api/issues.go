@@ -108,8 +108,9 @@ func (c *Client) ListLabels(owner, repo string) ([]Label, error) {
 // CreateLabelInput is the POST /repos/{owner}/{repo}/labels body. The
 // server owns name and color validation.
 type CreateLabelInput struct {
-	Name  string `json:"name"`
-	Color string `json:"color,omitempty"`
+	Name        string `json:"name"`
+	Color       string `json:"color,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // UpdateLabelInput is the PATCH /repos/{owner}/{repo}/labels/{id} body.
@@ -121,9 +122,9 @@ type UpdateLabelInput struct {
 }
 
 // CreateLabel creates a repository label and returns the server's echo.
-func (c *Client) CreateLabel(owner, repo, name, color string) (*Label, error) {
+func (c *Client) CreateLabel(owner, repo, name, color, description string) (*Label, error) {
 	var lbl Label
-	in := CreateLabelInput{Name: name, Color: color}
+	in := CreateLabelInput{Name: name, Color: color, Description: description}
 	path := fmt.Sprintf("/repos/%s/%s/labels", owner, repo)
 	if err := c.Do("POST", path, nil, in, &lbl); err != nil {
 		return nil, err
