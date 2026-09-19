@@ -111,6 +111,8 @@ func TestStatusPRSections(t *testing.T) {
 				{"number":11,"title":"other","state":"open",
 				 "requested_reviewers":[{"login":"you"}],"assignees":[{"login":"you"}]}
 			]`)
+		case "/api/v1/repos/o/r/issues":
+			fmt.Fprint(w, `[]`)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -130,7 +132,7 @@ func TestStatusPRSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("sections = %d, want 2", len(got))
+		t.Fatalf("sections = %+v, want the two PR sections (issues list is empty in this fixture)", got)
 	}
 	if got[0].Title != "Review requests awaiting you" || got[0].Entries[0].Index != 7 ||
 		got[0].Entries[0].Reason != "review-requested" {
@@ -155,5 +157,43 @@ func TestPullRequestDecodesAssignees(t *testing.T) {
 	}
 	if len(pr.Assignees) != 1 || pr.Assignees[0].Login != "me" {
 		t.Errorf("assignees = %+v", pr.Assignees)
+	}
+}
+
+// TestStatusOpenIssuesSection pins the third section: open issues list, one
+// entry each, reason "open", fetched after the PR sections.
+func TestStatusOpenIssuesSection(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/user":
+			fmt.Fprint(w, `{"id":1,"login":"me"}`)
+		case "/api/v1/repos/o/r/pulls":
+			fmt.Fprint(w, `[]`)
+		case "/api/v1/repos/o/r/issues":
+			if r.URL.Query().Get("type") != "issues" {
+				t.Errorf("type query = %q, want issues", r.URL.Query().Get("type"))
+			}
+			fmt.Fprint(w, `[{"number":3,"title":"docs drift","state":"open","html_url":"https://x/3"}]`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	ctx.Format = cli.FormatJSON
+
+	if err := runStatusDashboard(ctx, statusSections()); err != nil {
+		t.Fatal(err)
+	}
+	var got []statusSectionOut
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != "Open issues" {
+		t.Fatalf("sections = %+v", got)
+	}
+	e := got[0].Entries[0]
+	if e.Kind != "issue" || e.Index != 3 || e.Reason != "open" || e.URL != "https://x/3" {
+		t.Errorf("entry = %+v", e)
 	}
 }

@@ -37,6 +37,7 @@ func statusSections() []statusSection {
 	return []statusSection{
 		reviewRequestSection{cache: cache},
 		assignedPRSection{cache: cache},
+		openIssuesSection{},
 	}
 }
 
