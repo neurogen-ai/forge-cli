@@ -175,6 +175,40 @@ func (c *Client) SetPRDraft(owner, repo string, index int) (*PullRequest, error)
 	return c.patchPull(owner, repo, index, map[string]any{"draft": false})
 }
 
+// reviewersInput is the body for the dedicated reviewer endpoints.
+// Encoding note: no live probe ran against these endpoints
+// (scripts/probe-v0.6.0.sh.findings records the gap); the
+// {"reviewers":[...]} shape is the contract guess pending a probe.
+type reviewersInput struct {
+	Reviewers []string `json:"reviewers"`
+}
+
+// RequestReviewers adds review requests on pull request N via
+// POST /repos/{owner}/{repo}/pulls/{index}/requested_reviewers and returns
+// the updated pull request, so the receipt carries the server's view of the
+// request list.
+func (c *Client) RequestReviewers(owner, repo string, index int, users []string) (*PullRequest, error) {
+	return c.reviewers(owner, repo, index, "POST", users)
+}
+
+// RemoveReviewers removes review requests on pull request N via
+// DELETE /repos/{owner}/{repo}/pulls/{index}/requested_reviewers and returns
+// the updated pull request.
+func (c *Client) RemoveReviewers(owner, repo string, index int, users []string) (*PullRequest, error) {
+	return c.reviewers(owner, repo, index, "DELETE", users)
+}
+
+// reviewers is the shared transport for both reviewer endpoints; only the
+// method differs.
+func (c *Client) reviewers(owner, repo string, index int, method string, users []string) (*PullRequest, error) {
+	var pr PullRequest
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/requested_reviewers", owner, repo, index)
+	if err := c.Do(method, path, nil, reviewersInput{Reviewers: users}, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
 // GetReviews lists all reviews of a pull request, following Link headers
 // until exhausted (the server caps pages around 30; a truncated tail could
 // hide a review's only unresolved comment).

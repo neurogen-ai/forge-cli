@@ -555,6 +555,63 @@ func TestSetPRDraftAPIError(t *testing.T) {
 	}
 }
 
+func TestRequestAndRemoveReviewers(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		json.NewEncoder(w).Encode(PullRequest{Number: 7})
+	}))
+	defer ts.Close()
+	c := newTestClient(ts)
+
+	pr, err := c.RequestReviewers("o", "r", 7, []string{"ana", "bo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "POST" || gotPath != "/api/v1/repos/o/r/pulls/7/requested_reviewers" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"reviewers":["ana","bo"]}` {
+		t.Errorf("request body = %q", gotBody)
+	}
+	if pr.Number != 7 {
+		t.Errorf("pr = %+v, want the updated pull request", pr)
+	}
+
+	pr, err = c.RemoveReviewers("o", "r", 7, []string{"bo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "DELETE" || gotPath != "/api/v1/repos/o/r/pulls/7/requested_reviewers" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	if gotBody != `{"reviewers":["bo"]}` {
+		t.Errorf("remove body = %q", gotBody)
+	}
+	if pr.Number != 7 {
+		t.Errorf("pr = %+v", pr)
+	}
+}
+
+func TestRemoveReviewersAPIError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"pull request not found"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts).RemoveReviewers("o", "r", 9, []string{"ana"})
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 404 || apiErr.Message != "pull request not found" {
+		t.Errorf("apiErr = %+v", apiErr)
+	}
+}
+
 func TestGetPullDiff(t *testing.T) {
 	for _, tc := range []struct{ format, path, contentType string }{
 		{"diff", "/api/v1/repos/o/r/pulls/5.diff", "text/plain; charset=utf-8"},
