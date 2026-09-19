@@ -1,0 +1,25 @@
+scripts/probe-v0.6.0.sh.findings — probe status
+================================================
+2026 record, branch v0.6.0-endpoint-probe (commit 2).
+
+The probe script exists and passes `sh -n`, but it has NOT been executed:
+FORGE_PROBE_HOST / FORGE_PROBE_TOKEN / FORGE_PROBE_REPO / FORGE_PROBE_PR are
+unset in the implementation environment, so no live-instance findings exist.
+
+Consequence for the probe-gated branches (E: Actions runs, G: issue lock,
+H: notifications): per the probe-first rule in plans/releases/v0.6.0.md,
+these branches must cite probe findings before their transports are trusted.
+Until this script is run against the live instance and the labeled finding
+lines are recorded here (or in the release doc), the wire encodings in
+E1/G1/H1 are contract guesses from plans/implementation/v0.6.0.md's
+foundational contracts, and the "wire shape, probe finding, and commit
+change together" amendment path applies at merge review.
+
+How to run:
+  FORGE_PROBE_HOST=git.ngenesis.co.uk \
+  FORGE_PROBE_TOKEN=<token with repo write> \
+  FORGE_PROBE_REPO=<owner>/<test repo> \
+  [FORGE_PROBE_REF=main] [FORGE_PROBE_PR=<n>] \
+  sh scripts/probe-v0.6.0.sh | tee scripts/probe-v0.6.0.sh.findings
+
+Findings format: labeled lines "label: STATUS accepted|rejected excerpt".
