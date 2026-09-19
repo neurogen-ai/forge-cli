@@ -360,3 +360,66 @@ func gitRunner(t *testing.T, dir string) func(args ...string) {
 func filepathIsAbs(p string) bool {
 	return len(p) > 0 && os.IsPathSeparator(p[0])
 }
+
+func TestBranchHeadResolvesLocalBranch(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimSpace(string(out))
+	sha, err := BranchHead(dir, CurrentBranch(dir))
+	if err != nil {
+		t.Fatalf("BranchHead: %v", err)
+	}
+	if sha != want {
+		t.Errorf("BranchHead = %q, want %q", sha, want)
+	}
+}
+
+func TestBranchHeadUnknownBranchErrors(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+	if _, err := BranchHead(dir, "no-such-branch"); err == nil {
+		t.Fatal("BranchHead on unknown branch: want error, got nil")
+	} else if !strings.Contains(err.Error(), "git rev-parse") {
+		t.Errorf("error = %q, want git rev-parse contract", err)
+	}
+}
+
+func TestBranchHeadTagWithSameNameNeverShadows(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	initRepo(t, dir, "")
+	// A tag named like the branch must not shadow refs/heads/<branch>.
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("tag", "main", "0000000000000000000000000000000000000000")
+	branch := CurrentBranch(dir)
+	if branch == "" {
+		t.Fatal("CurrentBranch empty after init")
+	}
+	sha, err := BranchHead(dir, branch)
+	if err != nil {
+		t.Fatalf("BranchHead: %v", err)
+	}
+	cmd := exec.Command("git", "rev-parse", "refs/heads/"+branch)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha != strings.TrimSpace(string(out)) {
+		t.Errorf("BranchHead = %q, want branch head %q", sha, strings.TrimSpace(string(out)))
+	}
+}
