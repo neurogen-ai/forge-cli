@@ -242,6 +242,7 @@ func PRCommands() []cli.Command {
 		commentAddCmd{kind: "pr", gh: true}, commentAddCmd{kind: "pr"},
 		commentEditCmd{kind: "pr"}, commentDeleteCmd{kind: "pr"},
 		prStateCmd{action: "close"}, prStateCmd{action: "reopen"}, prStateCmd{action: "ready"},
+		prLockCmd{locking: true}, prLockCmd{locking: false},
 		editCmd{kind: "pr"},
 		browseCmd{kind: "pr"},
 		prMergeCmd{},

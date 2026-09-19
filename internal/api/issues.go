@@ -117,6 +117,25 @@ func (c *Client) SetIssueState(owner, repo string, index int, state string) (*Is
 	return c.patchIssue(owner, repo, index, map[string]string{"state": state})
 }
 
+// LockIssue locks the conversation on issue N. PRs ride the issue
+// endpoints, so pr lock uses the same call. reason is optional and
+// server-validated; an empty reason sends no body at all. An instance
+// without lock support returns a normal *APIError carrying the server
+// message verbatim, with no special error kind.
+func (c *Client) LockIssue(owner, repo string, index int, reason string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/lock", owner, repo, index)
+	if reason == "" {
+		return c.Do("POST", path, nil, nil, nil)
+	}
+	return c.Do("POST", path, nil, map[string]string{"reason": reason}, nil)
+}
+
+// UnlockIssue removes the conversation lock from issue N. Success has no body.
+func (c *Client) UnlockIssue(owner, repo string, index int) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/lock", owner, repo, index)
+	return c.Do("DELETE", path, nil, nil, nil)
+}
+
 // ListLabels lists repository labels (used to resolve names to IDs).
 func (c *Client) ListLabels(owner, repo string) ([]Label, error) {
 	var out []Label
