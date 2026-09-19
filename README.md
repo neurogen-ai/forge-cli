@@ -438,7 +438,7 @@ sent. Scope decisions for this release live in `plans/releases/v0.4.2.md`.
 forge version
 ```
 
-`forge version` prints `forge-cli v0.4.2` from the `forge.Version` constant
+`forge version` prints `forge-cli v0.6.0` from the `forge.Version` constant
 in repo-root `version.go`. That one line is where version numbers change.
 
 ## Three ways to ask "what's going on"
