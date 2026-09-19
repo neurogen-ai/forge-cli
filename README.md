@@ -441,6 +441,22 @@ forge version
 `forge version` prints `forge-cli v0.4.2` from the `forge.Version` constant
 in repo-root `version.go`. That one line is where version numbers change.
 
+## Three ways to ask "what's going on"
+
+These three answer different questions, at different ranges:
+
+- `forge pr sync-status [BRANCH]` answers one question about one branch: does
+  the open pull request for this branch carry my local head SHA? One request,
+  one answer (`in-sync`, `out-of-sync`, or `no-pr`), exit 0 either way. CI
+  polling is the caller's job.
+- `forge status` answers "what in this repository needs me right now?": review
+  requests made of you, pull requests assigned to you, open issues. One repo
+  per invocation; it never enumerates repositories.
+- Setup triage is the error path itself: when a command fails, forge probes
+  the host, token, owner, and repository layers and names the one that is
+  wrong (see Errors and diagnosis below). There is no separate diagnose
+  command; run any command and read the appended diagnosis.
+
 ## Errors and diagnosis
 
 API commands proceed naively; no wiring checks run before the request.

@@ -86,7 +86,11 @@ func (statusCmd) HelpPage() string {
 Show everything in this repository awaiting you: review requests made of
 you, pull requests assigned to you, and open issues. One repo only; cross-
 repo dashboards stay out of scope. Table output on a terminal, JSON
-elsewhere. Empty sections are skipped.`
+elsewhere. Empty sections are skipped.
+
+This is the repo-wide view; for one branch's CI/review state in one request,
+see forge pr sync-status. README (sync-status vs status vs setup diagnosis)
+covers how the two differ.`
 }
 
 func (statusCmd) Run(args []string, ctx *cli.Ctx) error {

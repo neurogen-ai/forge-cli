@@ -39,7 +39,11 @@ the current local branch) carries the branch's local head SHA. Prints
 in-sync, out-of-sync, or no-pr and exits 0 in all three cases; out-of-sync
 is data, not an error. The caller owns any polling -- this command never
 retries, watches, or waits. The single API request is the open-PR list for
-the repository, matched against the branch name.`
+the repository, matched against the branch name.
+
+This answers one branch. For everything awaiting you in one repo, see forge
+status; README (sync-status vs status vs setup diagnosis) covers how the
+two differ.`
 }
 
 // Run resolves the branch locally, makes exactly one API request (the
