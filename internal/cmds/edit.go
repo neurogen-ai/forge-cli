@@ -93,10 +93,10 @@ func (c editCmd) Run(args []string, ctx *cli.Ctx) error {
 			Hint: "example: forge " + c.Name() + " " + fmt.Sprint(n) + " --title \"new title\"",
 		}
 	}
-	if c.kind != "pr" && (hasFlag(args, "--add-reviewer") || hasFlag(args, "--remove-reviewer")) {
+	if c.kind != "pr" && (hasFlag(args, "--add-reviewer") || hasFlag(args, "--remove-reviewer") || hasFlag(args, "--clear-title") || hasFlag(args, "--clear-body")) {
 		return &cli.Error{
 			Code: cli.ExitUsage,
-			Msg:  "reviewer flags only apply to pr edit",
+			Msg:  "reviewer and clearing flags only apply to pr edit",
 			Hint: "use forge pr edit " + fmt.Sprint(n) + " --add-reviewer USER",
 		}
 	}
@@ -104,8 +104,7 @@ func (c editCmd) Run(args []string, ctx *cli.Ctx) error {
 	if c.kind == "pr" {
 		return c.runPull(ctx, n, in, clearTitle, clearBody, add, remove)
 	}
-	fields := editPatchBody(in, clearTitle, clearBody)
-	iss, err := ctx.API.EditIssueFields(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, fields)
+	iss, err := ctx.API.EditIssue(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, api.EditIssueInput(in))
 	if err != nil {
 		return mapErr(err)
 	}

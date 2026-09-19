@@ -78,13 +78,6 @@ func (c *Client) EditIssue(owner, repo string, index int, in EditIssueInput) (*I
 	return c.patchIssue(owner, repo, index, in)
 }
 
-// EditIssueFields patches arbitrary issue fields and returns the updated
-// issue. It backs issue edit's explicit clearing, which sends empty strings
-// the omitempty tags on EditIssueInput would drop.
-func (c *Client) EditIssueFields(owner, repo string, index int, fields any) (*Issue, error) {
-	return c.patchIssue(owner, repo, index, fields)
-}
-
 // patchIssue is the shared PATCH implementation for issue fields;
 // SetIssueState delegates here and keeps its signature.
 func (c *Client) patchIssue(owner, repo string, index int, fields any) (*Issue, error) {
