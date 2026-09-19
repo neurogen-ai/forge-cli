@@ -172,24 +172,30 @@ func TestIndexPlacementReviewSubmit(t *testing.T) {
 }
 
 func TestIndexPlacementResolveAll(t *testing.T) {
-	// The resolve-all fixture's fake server only knows pull 7, so a mis-scan
-	// of the numeric --review value 11 as the index would fail the run.
+	// The index fixture answers every reviews/comments path with empty or
+	// generic payloads, so the run itself succeeds under any index; the
+	// placement is pinned by which pull the review list was fetched from.
 	cases := []struct {
-		name string
-		args []string
+		name    string
+		args    []string
+		want    string
+		notWant string
 	}{
-		{"index first", []string{"7"}},
-		{"flags first", []string{"--yes", "7"}},
-		{"numeric flag value", []string{"--review", "11", "7", "--yes"}},
+		{"index first", []string{"7"}, "/pulls/7/reviews", ""},
+		{"flags first", []string{"--yes", "7"}, "/pulls/7/reviews", ""},
+		// The decoy 3 doubles as the fixture's only review id: a correct scan
+		// filters reviews by it, a mis-scan would fetch /pulls/3 instead.
+		{"numeric flag value", []string{"--review", "3", "7", "--yes"}, "/pulls/7/reviews", "/pulls/3/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fx := newResolveAllFixture(t)
-			ts := fx.server()
+			f := &indexFixture{}
+			ts := httptest.NewServer(http.HandlerFunc(f.serve))
 			defer ts.Close()
 			if err := (resolveAllCmd{}).Run(tc.args, testCtx(ts)); err != nil {
 				t.Fatal(err)
 			}
+			wantPaths(t, f, tc.want, tc.notWant)
 		})
 	}
 }

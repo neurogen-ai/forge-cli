@@ -242,19 +242,14 @@ func TestReviewFlagsEventMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.flag, func(t *testing.T) {
-			var gotEvent, gotBody string
+			// The handler only captures and answers; all assertions run on the
+			// test goroutine after Run returns (t.Fatalf from the handler's
+			// connection goroutine is unsupported and muddies the diagnostics).
+			var gotPath, gotEvent, gotBody, gotRaw string
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/api/v1/repos/o/r/pulls/7/reviews" {
-					t.Errorf("path = %q", r.URL.Path)
-					w.WriteHeader(500)
-					return
-				}
+				gotPath = r.URL.Path
 				raw, _ := io.ReadAll(r.Body)
-				var in api.SubmitReviewInput
-				if err := json.Unmarshal(raw, &in); err != nil {
-					t.Fatalf("request body: %v (%s)", err, raw)
-				}
-				gotEvent, gotBody = in.Event, in.Body
+				gotRaw = string(raw)
 				fmt.Fprintf(w, `{"id":41,"state":%q}`, tc.wantState)
 			}))
 			defer ts.Close()
@@ -263,6 +258,14 @@ func TestReviewFlagsEventMapping(t *testing.T) {
 			if err := (reviewFlagsCmd{}).Run(args, ctx); err != nil {
 				t.Fatal(err)
 			}
+			if gotPath != "/api/v1/repos/o/r/pulls/7/reviews" {
+				t.Errorf("path = %q", gotPath)
+			}
+			var in api.SubmitReviewInput
+			if err := json.Unmarshal([]byte(gotRaw), &in); err != nil {
+				t.Fatalf("request body: %v (%s)", err, gotRaw)
+			}
+			gotEvent, gotBody = in.Event, in.Body
 			if gotEvent != tc.wantEvent {
 				t.Errorf("event = %q want %q", gotEvent, tc.wantEvent)
 			}
