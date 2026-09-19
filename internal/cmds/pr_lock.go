@@ -1,6 +1,8 @@
 package cmds
 
 import (
+	"fmt"
+
 	"forge/internal/cli"
 )
 
@@ -42,7 +44,17 @@ func (c prLockCmd) Run(args []string, ctx *cli.Ctx) error {
 	}
 	reason := ""
 	if c.locking {
-		reason, _ = flagValue(args, "--reason")
+		if hasFlagToken(args, "--reason") {
+			var ok bool
+			reason, ok = flagValue(args, "--reason")
+			if !ok {
+				return &cli.Error{
+					Code: cli.ExitUsage,
+					Msg:  "--reason requires a value",
+					Hint: "example: forge pr lock " + fmt.Sprint(n) + " --reason off-topic",
+				}
+			}
+		}
 		if err := c.lock(ctx, n, reason); err != nil {
 			return err
 		}
