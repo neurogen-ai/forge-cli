@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/url"
 )
 
@@ -41,12 +42,31 @@ func (c *Client) ListNotifications(all bool) ([]Notification, error) {
 	return List[Notification](c, "/notifications", q)
 }
 
-// MarkNotificationsRead marks the given notification IDs read in one batch
-// request. A server that rejects the batch shape surfaces that as a normal
-// API error; there is no per-id fallback loop in the transport.
+// MarkNotificationsRead marks the given notification IDs read: one batch
+// PUT /notifications with {"ids":[...]} when the server accepts it, and
+// sequential per-id PUT /notifications/threads/{id} otherwise (Branch H3:
+// batch first, sequentially otherwise). Both encodings are the un-probed
+// contract guess; scripts/probe-v0.6.0.sh.findings records the amendment
+// path if the live probe rejects either shape.
 func (c *Client) MarkNotificationsRead(ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return c.Do("PUT", "/notifications", nil, markReadInput{IDs: ids}, nil)
+	err := c.Do("PUT", "/notifications", nil, markReadInput{IDs: ids}, nil)
+	_, isAPIErr := err.(*APIError)
+	if err != nil && !isAPIErr {
+		// Transport-level failure, not a server rejection: nothing tells us
+		// the batch shape is wrong, so surface it instead of retrying.
+		return err
+	}
+	if err != nil {
+		// The server rejected the batch shape; mark each ID read in its own
+		// request instead.
+		for _, id := range ids {
+			if err := c.Do("PUT", fmt.Sprintf("/notifications/threads/%d", id), nil, nil, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

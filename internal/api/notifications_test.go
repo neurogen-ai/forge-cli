@@ -87,6 +87,34 @@ func TestMarkNotificationsReadSendsBatchIDs(t *testing.T) {
 	}
 }
 
+func TestMarkNotificationsReadFallsBackToSequentialThreads(t *testing.T) {
+	var paths []string
+	var methods []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/api/v1/notifications" {
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(205)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).MarkNotificationsRead([]int64{4, 9}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/api/v1/notifications", "/api/v1/notifications/threads/4", "/api/v1/notifications/threads/9"}
+	if len(paths) != 3 {
+		t.Fatalf("paths = %v", paths)
+	}
+	for i := range want {
+		if paths[i] != want[i] || methods[i] != "PUT" {
+			t.Errorf("request %d = %s %s, want PUT %s", i, methods[i], paths[i], want[i])
+		}
+	}
+}
+
 func TestMarkNotificationsReadEmptyIsNoRequest(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("unexpected request for empty ids")
