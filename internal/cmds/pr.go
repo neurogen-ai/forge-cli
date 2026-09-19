@@ -208,9 +208,9 @@ forge pr pull N to download the conversation.`
 func PRCommands() []cli.Command {
 	return []cli.Command{
 		prCreateCmd{}, createBatchCmd{}, prGetCmd{}, prListCmd{}, prConvCmd{},
-		reviewListCmd{}, reviewSubmitCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
+		reviewListCmd{}, reviewSubmitCmd{}, reviewFlagsCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
-		commentAddCmd{kind: "pr"},
+		commentAddCmd{kind: "pr", gh: true}, commentAddCmd{kind: "pr"},
 		prStateCmd{action: "close"}, prStateCmd{action: "reopen"}, prStateCmd{action: "ready"},
 		editCmd{kind: "pr"},
 		browseCmd{kind: "pr"},

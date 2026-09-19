@@ -137,7 +137,7 @@ func (prConvCmd) RequiresAPI() bool    { return true }
 func (prConvCmd) DefaultIsTable() bool { return true } // makes --table legal; rendering is sectioned, not gridded
 
 func (prConvCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr conv")
+	n, err := parseIndex(stripFlags(args, "--min-unresolved"), "pr conv")
 	if err != nil {
 		return err
 	}

@@ -62,7 +62,7 @@ func (prMergeCmd) Run(args []string, ctx *cli.Ctx) error {
 	if err != nil {
 		return err
 	}
-	n, err := parseIndex(args, "pr merge")
+	n, err := parseIndex(stripFlags(args, "--subject", "--body"), "pr merge")
 	if err != nil {
 		return err
 	}

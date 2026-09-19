@@ -39,9 +39,14 @@ type Command interface {
 // never as ad-hoc parameters.
 type Ctx struct {
 	Stdout, Stderr io.Writer
-	Verbose        bool
-	Help           bool
-	GlobalFlags    GlobalFlags
+
+	// Stdin is process input; commands reach it only through Ctx. main wires
+	// os.Stdin, tests substitute a reader, and nil stays legal for commands
+	// that never read it.
+	Stdin       io.Reader
+	Verbose     bool
+	Help        bool
+	GlobalFlags GlobalFlags
 
 	// Format is set centrally by Run after flag parsing; commands read it,
 	// they never write it.

@@ -141,7 +141,7 @@ type ResolutionFailure struct {
 }
 
 func (resolveAllCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(args, "pr resolve-all")
+	n, err := parseIndex(stripFlags(args, "--review"), "pr resolve-all")
 	if err != nil {
 		return err
 	}

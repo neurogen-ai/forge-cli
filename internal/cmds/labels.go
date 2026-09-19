@@ -129,7 +129,7 @@ first failure.`
 
 func (c issueLabelCmd) Run(args []string, ctx *cli.Ctx) error {
 	name := c.Name()
-	n, err := parseIndex(args, name)
+	n, err := parseIndex(stripFlags(args, "--label"), name)
 	if err != nil {
 		return err
 	}
