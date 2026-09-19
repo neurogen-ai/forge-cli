@@ -38,6 +38,9 @@ type CommentReceipt struct {
 
 // AnchoredCommentReceipt is the mutation output for an anchored inline
 // comment: what was anchored, as the user asked it, plus the server URL.
+// ID is the comment id when the server echoes the created comment; servers
+// that do not echo it yield the review id instead, so treat it as opaque
+// rather than a thread-resolvable comment reference.
 type AnchoredCommentReceipt struct {
 	ID      int64  `json:"id"`
 	Path    string `json:"path"`
@@ -78,10 +81,12 @@ func (c commentAddCmd) run(args []string, ctx *cli.Ctx) error {
 	// Token presence, not flagValue: a dangling anchor flag has no value for
 	// flagValue to find, and routing it to the unanchored transport would
 	// silently drop the anchor the user asked for. --body's value is stripped
-	// first so a body that literally reads "--file" is not mistaken for a flag.
+	// first so a body that literally reads "--file" is not mistaken for a flag;
+	// runAnchored re-derives every anchor flag from that same body-stripped
+	// slice so the body value can never poison flag parsing.
 	anchorArgs := stripFlags(args, "--body")
 	if hasFlagToken(anchorArgs, "--file") || hasFlagToken(anchorArgs, "--line") || hasFlagToken(anchorArgs, "--side") {
-		return c.runAnchored(args, ctx, n, text)
+		return c.runAnchored(anchorArgs, ctx, n, text)
 	}
 	comment, err := ctx.API.AddComment(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, text)
 	if err != nil {
@@ -106,9 +111,11 @@ func hasFlagToken(args []string, name string) bool {
 // encoding lives only in internal/api's AnchorToWire. A server rejection of
 // the anchor is the standard exit-1 path; there is no fallback to the
 // unanchored issue-comment transport.
-func (c commentAddCmd) runAnchored(args []string, ctx *cli.Ctx, n int, text string) error {
-	fileTok := hasFlagToken(args, "--file")
-	lineTok := hasFlagToken(args, "--line")
+func (c commentAddCmd) runAnchored(anchorArgs []string, ctx *cli.Ctx, n int, text string) error {
+	// anchorArgs has --body (and its value, whatever it reads) stripped, so
+	// flag lookups below cannot mistake the body text for flag syntax.
+	fileTok := hasFlagToken(anchorArgs, "--file")
+	lineTok := hasFlagToken(anchorArgs, "--line")
 	if !fileTok || !lineTok {
 		missing := "--file"
 		if fileTok {
@@ -120,7 +127,7 @@ func (c commentAddCmd) runAnchored(args []string, ctx *cli.Ctx, n int, text stri
 			Hint: "anchor to one hunk line with --file P --line L",
 		}
 	}
-	file, hasFile := flagValue(args, "--file")
+	file, hasFile := flagValue(anchorArgs, "--file")
 	if !hasFile {
 		return &cli.Error{
 			Code: cli.ExitUsage,
@@ -128,7 +135,7 @@ func (c commentAddCmd) runAnchored(args []string, ctx *cli.Ctx, n int, text stri
 			Hint: "anchor to one hunk line with --file P --line L",
 		}
 	}
-	lineStr, hasLine := flagValue(args, "--line")
+	lineStr, hasLine := flagValue(anchorArgs, "--line")
 	if !hasLine {
 		return &cli.Error{
 			Code: cli.ExitUsage,
@@ -143,8 +150,8 @@ func (c commentAddCmd) runAnchored(args []string, ctx *cli.Ctx, n int, text stri
 			Msg:  fmt.Sprintf("%s: --line %q is not a positive line number", c.Name(), lineStr),
 		}
 	}
-	side, hasSide := flagValue(args, "--side")
-	if hasFlagToken(args, "--side") && !hasSide {
+	side, hasSide := flagValue(anchorArgs, "--side")
+	if hasFlagToken(anchorArgs, "--side") && !hasSide {
 		return &cli.Error{
 			Code: cli.ExitUsage,
 			Msg:  c.Name() + ": --side requires old or new",

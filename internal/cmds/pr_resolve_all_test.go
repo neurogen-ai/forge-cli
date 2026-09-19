@@ -23,6 +23,7 @@ type resolveAllFixture struct {
 	comments   map[int64][]api.ReviewComment // reviewID -> comments
 	resolveErr map[int64]*api.APIError       // commentID -> forced failure
 	mu         sync.Mutex
+	paths      []string // every request, "METHOD path", for placement assertions
 }
 
 func newResolveAllFixture(t *testing.T) *resolveAllFixture {
@@ -38,6 +39,7 @@ func (f *resolveAllFixture) server() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.paths = append(f.paths, r.Method+" "+r.URL.Path)
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/reviews") && r.Method == http.MethodGet:
 			writeTestJSON(f.t, w, f.reviews)

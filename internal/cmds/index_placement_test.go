@@ -172,8 +172,9 @@ func TestIndexPlacementReviewSubmit(t *testing.T) {
 }
 
 func TestIndexPlacementResolveAll(t *testing.T) {
-	// The resolve-all fixture's fake server only knows pull 7, so a mis-scan
-	// of the numeric --review value 11 as the index would fail the run.
+	// Assert the reviews GET went to /pulls/7, not to the numeric --review
+	// flag value 11: a mis-scan of the flag value as the index must fail here
+	// rather than silently hitting a different pull.
 	cases := []struct {
 		name string
 		args []string
@@ -189,6 +190,15 @@ func TestIndexPlacementResolveAll(t *testing.T) {
 			defer ts.Close()
 			if err := (resolveAllCmd{}).Run(tc.args, testCtx(ts)); err != nil {
 				t.Fatal(err)
+			}
+			fx.mu.Lock()
+			joined := strings.Join(fx.paths, "\n")
+			fx.mu.Unlock()
+			if !strings.Contains(joined, "GET /api/v1/repos/o/r/pulls/7/reviews") {
+				t.Errorf("requests = %v, want a reviews GET for pull 7", fx.paths)
+			}
+			if strings.Contains(joined, "/pulls/11/") {
+				t.Errorf("requests = %v, --review value 11 was mistaken for the index", fx.paths)
 			}
 		})
 	}
