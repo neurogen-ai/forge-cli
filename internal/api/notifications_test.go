@@ -2,28 +2,98 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-func TestNotificationDecode(t *testing.T) {
-	raw := `{
-		"id": 42,
-		"unread": true,
-		"subject": {"title":"fix the leak","type":"PullRequest","url":"https://git.test/o/r/pulls/7"},
-		"repository": {"id": 3, "full_name": "o/r", "owner": {"id": 1, "login": "o"}}
-	}`
-	var got Notification
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+func TestListNotificationsDefaultUnreadOnly(t *testing.T) {
+	var gotPath, gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		json.NewEncoder(w).Encode([]Notification{{ID: 3, Unread: true}})
+	}))
+	defer ts.Close()
+
+	ns, err := newTestClient(ts).ListNotifications(false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != 42 || !got.Unread {
-		t.Errorf("id/unread = %d %v", got.ID, got.Unread)
+	if gotPath != "/api/v1/notifications" {
+		t.Errorf("path = %q", gotPath)
 	}
-	if got.Subject.Title != "fix the leak" || got.Subject.Type != "PullRequest" ||
-		got.Subject.URL != "https://git.test/o/r/pulls/7" {
-		t.Errorf("subject = %+v", got.Subject)
+	if gotQuery != "" {
+		t.Errorf("query = %q, want no all param by default", gotQuery)
 	}
-	if got.Repository.FullName != "o/r" || got.Repository.Owner.Login != "o" {
-		t.Errorf("repository = %+v", got.Repository)
+	if len(ns) != 1 || ns[0].ID != 3 || !ns[0].Unread {
+		t.Errorf("ns = %+v", ns)
+	}
+}
+
+func TestListNotificationsAllParam(t *testing.T) {
+	var gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		json.NewEncoder(w).Encode([]Notification{})
+	}))
+	defer ts.Close()
+
+	if _, err := newTestClient(ts).ListNotifications(true); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "all=true" {
+		t.Errorf("query = %q, want all=true", gotQuery)
+	}
+}
+
+func TestListNotificationsDecodesSubjectAndRepo(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":7,"unread":true,"subject":{"title":"re: fix","type":"PullRequest","url":"http://x/1"},"repository":{"full_name":"o/r"}}]`))
+	}))
+	defer ts.Close()
+
+	ns, err := newTestClient(ts).ListNotifications(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ns) != 1 {
+		t.Fatalf("len(ns) = %d", len(ns))
+	}
+	n := ns[0]
+	if n.Subject.Title != "re: fix" || n.Subject.Type != "PullRequest" || n.Repository.FullName != "o/r" {
+		t.Errorf("n = %+v", n)
+	}
+}
+
+func TestMarkNotificationsReadSendsBatchIDs(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(205)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).MarkNotificationsRead([]int64{4, 9}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PUT" || gotPath != "/api/v1/notifications" {
+		t.Errorf("got %s %s", gotMethod, gotPath)
+	}
+	ids, _ := gotBody["ids"].([]any)
+	if len(ids) != 2 || ids[0] != float64(4) || ids[1] != float64(9) {
+		t.Errorf("body = %v", gotBody)
+	}
+}
+
+func TestMarkNotificationsReadEmptyIsNoRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected request for empty ids")
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts).MarkNotificationsRead(nil); err != nil {
+		t.Fatal(err)
 	}
 }
