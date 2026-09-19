@@ -229,3 +229,162 @@ func TestReviewSubmitServerError(t *testing.T) {
 		t.Errorf("msg %q missing server message", cerr.Msg)
 	}
 }
+
+// ---- pr review (gh-style flags) ----
+
+func TestReviewFlagsEventMapping(t *testing.T) {
+	cases := []struct {
+		flag, body, wantEvent, wantState string
+	}{
+		{"--approve", "ship it", "APPROVED", "APPROVED"},
+		{"--request-changes", "fix the race", "REQUEST_CHANGES", "CHANGES_REQUESTED"},
+		{"--comment", "nit in a.go", "COMMENT", "COMMENTED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			var gotEvent, gotBody string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/repos/o/r/pulls/7/reviews" {
+					t.Errorf("path = %q", r.URL.Path)
+					w.WriteHeader(500)
+					return
+				}
+				raw, _ := io.ReadAll(r.Body)
+				var in api.SubmitReviewInput
+				if err := json.Unmarshal(raw, &in); err != nil {
+					t.Fatalf("request body: %v (%s)", err, raw)
+				}
+				gotEvent, gotBody = in.Event, in.Body
+				fmt.Fprintf(w, `{"id":41,"state":%q}`, tc.wantState)
+			}))
+			defer ts.Close()
+			ctx := testCtx(ts)
+			args := []string{"7", tc.flag, "--body", tc.body}
+			if err := (reviewFlagsCmd{}).Run(args, ctx); err != nil {
+				t.Fatal(err)
+			}
+			if gotEvent != tc.wantEvent {
+				t.Errorf("event = %q want %q", gotEvent, tc.wantEvent)
+			}
+			if gotBody != tc.body {
+				t.Errorf("body = %q want %q", gotBody, tc.body)
+			}
+			var rc ReviewReceipt
+			if err := json.Unmarshal([]byte(ctx.Stdout.(*bytes.Buffer).String()), &rc); err != nil {
+				t.Fatalf("receipt: %v", err)
+			}
+			if rc.ID != 41 || rc.State != tc.wantState {
+				t.Errorf("receipt = %+v want {41 %s}", rc, tc.wantState)
+			}
+		})
+	}
+}
+
+// Index-first and flags-first placements both resolve the same index through
+// the shared strip-then-scan discipline.
+func TestReviewFlagsIndexPlacement(t *testing.T) {
+	cases := [][]string{
+		{"7", "--approve"},
+		{"--approve", "7"},
+	}
+	for _, args := range cases {
+		var path string
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path = r.URL.Path
+			fmt.Fprint(w, `{"id":3,"state":"APPROVED"}`)
+		}))
+		ctx := testCtx(ts)
+		if err := (reviewFlagsCmd{}).Run(args, ctx); err != nil {
+			t.Fatal(err)
+		}
+		ts.Close()
+		if path != "/api/v1/repos/o/r/pulls/7/reviews" {
+			t.Errorf("args %v: path = %q", args, path)
+		}
+	}
+}
+
+// A numeric --body value must never be mistaken for the index.
+func TestReviewFlagsNumericBodyValue(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var in api.SubmitReviewInput
+		json.Unmarshal(raw, &in)
+		gotBody = in.Body
+		fmt.Fprint(w, `{"id":5,"state":"COMMENTED"}`)
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	if err := (reviewFlagsCmd{}).Run([]string{"--comment", "--body", "42", "7"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != "42" {
+		t.Errorf("body = %q want 42", gotBody)
+	}
+}
+
+func TestReviewFlagsValidationSendsNoRequest(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"no flags", []string{"7"}},
+		{"approve and comment", []string{"7", "--approve", "--comment"}},
+		{"request-changes without body", []string{"7", "--request-changes"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+				w.WriteHeader(500)
+			}))
+			defer ts.Close()
+			ctx := testCtx(ts)
+			err := (reviewFlagsCmd{}).Run(tc.args, ctx)
+			cerr, ok := err.(*cli.Error)
+			if !ok {
+				t.Fatalf("err = %v, want *cli.Error", err)
+			}
+			if cerr.Code != cli.ExitUsage {
+				t.Errorf("code = %d want %d", cerr.Code, cli.ExitUsage)
+			}
+			if hits != 0 {
+				t.Errorf("validation sent %d requests, want 0", hits)
+			}
+		})
+	}
+}
+
+// --approve needs no body: the request omits the body field entirely, same as
+// the submit spelling.
+func TestReviewFlagsOmitsEmptyBody(t *testing.T) {
+	var rawBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		rawBody = string(raw)
+		fmt.Fprint(w, `{"id":9,"state":"APPROVED"}`)
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	if err := (reviewFlagsCmd{}).Run([]string{"7", "--approve"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rawBody != `{"event":"APPROVED"}` {
+		t.Errorf("request body = %q", rawBody)
+	}
+}
+
+// Both spellings stay registered and hit the same transport.
+func TestReviewSpellingsBothRegistered(t *testing.T) {
+	names := make(map[string]bool)
+	for _, c := range PRCommands() {
+		names[c.Name()] = true
+	}
+	for _, want := range []string{"pr review", "pr review submit", "pr review list"} {
+		if !names[want] {
+			t.Errorf("%s not registered", want)
+		}
+	}
+}
