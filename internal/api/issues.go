@@ -36,6 +36,28 @@ func (c *Client) AddComment(owner, repo string, index int, body string) (*Commen
 	return &com, nil
 }
 
+// EditComment patches one issue comment's body and returns the updated
+// comment. The id is the issue-comment id; Forgejo serves PR comments from
+// the same collection.
+func (c *Client) EditComment(owner, repo string, commentID int64, body string) (*Comment, error) {
+	var com Comment
+	in := struct {
+		Body string `json:"body"`
+	}{body}
+	path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
+	if err := c.Do("PATCH", path, nil, in, &com); err != nil {
+		return nil, err
+	}
+	return &com, nil
+}
+
+// DeleteComment deletes one issue comment. Success has no body. The id is
+// the issue-comment id.
+func (c *Client) DeleteComment(owner, repo string, commentID int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
+	return c.Do("DELETE", path, nil, nil, nil)
+}
+
 // GetIssue fetches one issue by index.
 func (c *Client) GetIssue(owner, repo string, index int) (*Issue, error) {
 	var iss Issue
