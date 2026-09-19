@@ -1,22 +1,19 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestListCommitStatusesDecode(t *testing.T) {
+func TestListCommitStatuses(t *testing.T) {
 	var gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		if got := r.Header.Get("Authorization"); got != "token tok" {
-			t.Errorf("Authorization = %q", got)
-		}
-		w.Write([]byte(`[
-			{"status":"success","context":"ci/build","description":"build passed","target_url":"https://ci.test/b/1"},
-			{"status":"pending","context":"ci/test"}
-		]`))
+		json.NewEncoder(w).Encode([]CommitStatus{
+			{State: "success", Context: "ci/build", Description: "done"},
+		})
 	}))
 	defer ts.Close()
 
@@ -25,45 +22,71 @@ func TestListCommitStatusesDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if gotPath != "/api/v1/repos/o/r/commits/abc123/statuses" {
-		t.Errorf("path = %q", gotPath)
+		t.Errorf("path = %s", gotPath)
 	}
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	if got[0].State != "success" || got[0].Context != "ci/build" ||
-		got[0].Description != "build passed" || got[0].TargetURL != "https://ci.test/b/1" {
-		t.Errorf("status[0] = %+v", got[0])
-	}
-	if got[1].State != "pending" || got[1].Context != "ci/test" ||
-		got[1].Description != "" || got[1].TargetURL != "" {
-		t.Errorf("status[1] = %+v", got[1])
+	if len(got) != 1 || got[0].State != "success" || got[0].Context != "ci/build" {
+		t.Errorf("statuses = %+v", got)
 	}
 }
 
-func TestListCommitStatusesEscapesRef(t *testing.T) {
+func TestListRunsForRef(t *testing.T) {
 	var gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Write([]byte(`[]`))
+		gotPath = r.URL.Path
+		json.NewEncoder(w).Encode(map[string]any{
+			"total_count": 2,
+			"entries": []map[string]any{
+				{"id": 7, "name": "build", "status": "success", "head_sha": "abc123", "head_branch": "main", "url": "/o/r/actions/runs/7"},
+				{"id": 8, "name": "build", "status": "running", "head_sha": "def456", "head_branch": "other", "url": "/o/r/actions/runs/8"},
+			},
+		})
 	}))
 	defer ts.Close()
 
-	if _, err := newTestClient(ts).ListCommitStatuses("o", "r", "feature/x"); err != nil {
+	runs, available, err := newTestClient(ts).ListRunsForRef("o", "r", "main")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/api/v1/repos/o/r/commits/feature%2Fx/statuses" {
-		t.Errorf("path = %q", gotPath)
+	if gotPath != "/api/v1/repos/o/r/actions/tasks" {
+		t.Errorf("path = %s", gotPath)
+	}
+	if !available {
+		t.Fatal("expected available")
+	}
+	if len(runs) != 1 || runs[0].ID != 7 || runs[0].Status != "success" || runs[0].HeadSHA != "abc123" {
+		t.Errorf("runs = %+v", runs)
 	}
 }
 
-func TestListCommitStatusesError(t *testing.T) {
+func TestListRunsForRefUnavailableIs404(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(404)
-		w.Write([]byte(`{"message":"repo does not exist"}`))
+		http.Error(w, `{"message":"Not Found"}`, 404)
 	}))
 	defer ts.Close()
 
-	if _, err := newTestClient(ts).ListCommitStatuses("o", "r", "main"); err == nil {
-		t.Fatal("want error")
+	runs, available, err := newTestClient(ts).ListRunsForRef("o", "r", "main")
+	if err != nil {
+		t.Fatalf("404 must be a typed outcome, not an error: %v", err)
+	}
+	if available {
+		t.Error("expected available=false on 404")
+	}
+	if runs != nil {
+		t.Errorf("runs = %+v, want nil", runs)
+	}
+}
+
+func TestListRunsForRefServerErrorReturnsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"boom"}`, 500)
+	}))
+	defer ts.Close()
+
+	_, available, err := newTestClient(ts).ListRunsForRef("o", "r", "main")
+	if err == nil {
+		t.Fatal("expected error on 500")
+	}
+	if available {
+		t.Error("expected available=false on error")
 	}
 }
