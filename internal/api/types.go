@@ -47,6 +47,10 @@ type PullRequest struct {
 	} `json:"base"`
 
 	Labels []Label `json:"labels,omitempty"`
+
+	// RequestedReviewers is the server's review-request list; F's edit verb
+	// and K's status section read it. Absent when the instance sends none.
+	RequestedReviewers []User `json:"requested_reviewers,omitempty"`
 }
 
 // Issue models issue payloads. PullRequestBody is non-nil exactly when the
