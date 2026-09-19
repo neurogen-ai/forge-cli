@@ -139,6 +139,20 @@ func (c *Client) ListPullRequests(owner, repo, state string, page, limit int) ([
 	return List[PullRequest](c, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
 }
 
+// ListOpenPullRequestsOnePage returns the first page of open pull requests
+// without following pagination links. It backs pr sync-status, whose
+// contract is exactly one API request per invocation; a PR beyond the
+// server's first page is a no-pr answer, not a second request.
+func (c *Client) ListOpenPullRequestsOnePage(owner, repo string) ([]PullRequest, error) {
+	q := url.Values{"state": {"open"}}
+	path := c.pageURL(fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), q)
+	var prs []PullRequest
+	if _, err := c.getPage(path, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
+}
+
 // EditPullInput is the PATCH /repos/{owner}/{repo}/pulls/{index} body for
 // partial edits. Zero-value fields are omitted from the wire, so callers
 // patch exactly the fields the user supplied.

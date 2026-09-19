@@ -54,6 +54,12 @@ func (prSyncStatusCmd) Run(args []string, ctx *cli.Ctx) error {
 	branch := ""
 	if len(rest) == 1 {
 		branch = rest[0]
+	} else if len(rest) > 1 {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  "pr sync-status takes at most one BRANCH",
+			Hint: "example: forge pr sync-status feature-x",
+		}
 	} else {
 		branch = gitctx.CurrentBranch(root)
 		if branch == "" {
@@ -80,7 +86,7 @@ func (prSyncStatusCmd) Run(args []string, ctx *cli.Ctx) error {
 		}
 	}
 
-	prs, err := ctx.API.ListPullRequests(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, "open", 0, 0)
+	prs, err := ctx.API.ListOpenPullRequestsOnePage(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo)
 	if err != nil {
 		return mapErr(err)
 	}

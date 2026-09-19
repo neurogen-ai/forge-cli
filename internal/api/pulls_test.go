@@ -269,6 +269,27 @@ func TestListPullRequestsEmptyStateOmitsParam(t *testing.T) {
 	}
 }
 
+func TestListOpenPullRequestsOnePageIgnoresLinkHeader(t *testing.T) {
+	var hits int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Link", `</api/v1/repos/o/r/pulls?state=open&page=2>; rel="next"`)
+		json.NewEncoder(w).Encode([]PullRequest{{Number: 1}})
+	}))
+	defer ts.Close()
+
+	prs, err := newTestClient(ts).ListOpenPullRequestsOnePage("o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Errorf("hits = %d, want exactly one request", hits)
+	}
+	if len(prs) != 1 || prs[0].Number != 1 {
+		t.Errorf("prs = %+v", prs)
+	}
+}
+
 func TestGetReviewsAndComments(t *testing.T) {
 	var paths []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
