@@ -175,6 +175,7 @@ func main() {
 	reg := cli.NewRegistry()
 	reg.Register(versionCmd{})
 	reg.Register(cmds.PRCommands()...)
+	reg.Register(cmds.NotificationsCommands()...)
 	reg.Register(cmds.IssueCommands()...)
 	reg.Register(cmds.PullCommands()...)
 	reg.Register(cmds.CacheCommands()...)
