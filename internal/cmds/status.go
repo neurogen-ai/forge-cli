@@ -30,9 +30,14 @@ type statusSection interface {
 }
 
 // statusSections is the registration order; the dashboard renders sections
-// in this order. A new section is one type plus one entry here.
+// in this order. A new section is one type plus one entry here. The PR
+// sections share one openPRCache, so a run fetches the open-PR list once.
 func statusSections() []statusSection {
-	return []statusSection{}
+	cache := &openPRCache{}
+	return []statusSection{
+		reviewRequestSection{cache: cache},
+		assignedPRSection{cache: cache},
+	}
 }
 
 // statusSectionOut is the JSON shape: sections in registration order, each
