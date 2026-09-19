@@ -56,6 +56,22 @@ func writeJSON(w interface{ Write([]byte) (int, error) }, v any) error {
 	return enc.Encode(v)
 }
 
+// collectFlagValues returns every "--name value" pair's values for one
+// flag, in command-line order. It is the single repeated-value-flag
+// collection path: a trailing bare --name with no value consumes nothing,
+// and each value is taken verbatim from the next token, so named flags must
+// be value-taking; strip them with stripFlags at index-parsing call sites.
+func collectFlagValues(args []string, name string) []string {
+	var values []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			values = append(values, args[i+1])
+			i++
+		}
+	}
+	return values
+}
+
 // stripFlags removes every "--name value" pair for the named flags from args,
 // preserving the order of the remaining arguments. A named flag with no
 // following token consumes nothing. Call sites list only their value-taking

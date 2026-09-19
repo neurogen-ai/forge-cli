@@ -8,18 +8,11 @@ import (
 )
 
 // collectLabelNames returns repeated --label values in command-line order,
-// the only name-collection path in the command layer. A trailing bare
-// --label with no value is ignored, matching the issue-create behaviour
+// delegating to the one repeated-value-flag collector in cmds.go. A trailing
+// bare --label with no value is ignored, matching the issue-create behaviour
 // this collector was extracted from.
 func collectLabelNames(args []string, cmdName string) ([]string, error) {
-	var names []string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--label" && i+1 < len(args) {
-			names = append(names, args[i+1])
-			i++
-		}
-	}
-	return names, nil
+	return collectFlagValues(args, "--label"), nil
 }
 
 // resolveLabelIDs fetches repository labels once and maps exact names to
