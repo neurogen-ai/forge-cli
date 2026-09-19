@@ -240,6 +240,7 @@ func PRCommands() []cli.Command {
 		reviewListCmd{}, reviewSubmitCmd{}, reviewFlagsCmd{}, resolveCmd{unresolve: false}, resolveCmd{unresolve: true},
 		resolveAllCmd{},
 		commentAddCmd{kind: "pr", gh: true}, commentAddCmd{kind: "pr"},
+		commentEditCmd{kind: "pr"}, commentDeleteCmd{kind: "pr"},
 		prStateCmd{action: "close"}, prStateCmd{action: "reopen"}, prStateCmd{action: "ready"},
 		editCmd{kind: "pr"},
 		browseCmd{kind: "pr"},

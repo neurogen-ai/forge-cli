@@ -157,6 +157,7 @@ func IssueCommands() []cli.Command {
 		issueCreateCmd{}, issueGetCmd{}, issueListCmd{},
 		issueStateCmd{closing: true}, issueStateCmd{closing: false},
 		commentAddCmd{kind: "issue"},
+		commentEditCmd{kind: "issue"}, commentDeleteCmd{kind: "issue"},
 		editCmd{kind: "issue"},
 		browseCmd{kind: "issue"},
 	}
