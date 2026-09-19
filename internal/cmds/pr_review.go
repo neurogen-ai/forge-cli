@@ -115,8 +115,10 @@ type ReviewReceipt struct {
 }
 
 // reviewEvent maps a CLI --state spelling to the exact Forgejo review event.
-// request-changes requires a non-empty body; the other events do not.
-func reviewEvent(state, body string) (string, error) {
+// request-changes requires a non-empty body; the other events do not. cmdName
+// is the invoked spelling ("pr review" or "pr review submit") and feeds the
+// usage-error messages, so both spellings name themselves correctly.
+func reviewEvent(cmdName, state, body string) (string, error) {
 	switch state {
 	case "approve":
 		return "APPROVED", nil
@@ -126,27 +128,35 @@ func reviewEvent(state, body string) (string, error) {
 		if body == "" {
 			return "", &cli.Error{
 				Code: cli.ExitUsage,
-				Msg:  "pr review submit: --state request-changes requires --body",
-				Hint: "explain what must change, or use --state comment for a non-blocking note",
+				Msg:  cmdName + ": request-changes requires --body",
+				Hint: "explain what must change, or use comment for a non-blocking note",
 			}
 		}
 		return "REQUEST_CHANGES", nil
 	default:
 		return "", &cli.Error{
 			Code: cli.ExitUsage,
-			Msg:  fmt.Sprintf("pr review submit: --state must be approve, request-changes, or comment (got %q)", state),
+			Msg:  fmt.Sprintf("%s: --state must be approve, request-changes, or comment (got %q)", cmdName, state),
 		}
 	}
 }
 
 func (reviewSubmitCmd) Run(args []string, ctx *cli.Ctx) error {
-	n, err := parseIndex(stripFlags(args, "--state", "--body"), "pr review submit")
+	state, _ := flagValue(args, "--state")
+	body, _ := flagValue(args, "--body")
+	return runReviewSubmit(args, ctx, "pr review submit", state, body)
+}
+
+// runReviewSubmit is the one review-submission path behind both registered
+// spellings: it scans the index with the value flags stripped, validates the
+// event through reviewEvent, and posts SubmitReviewInput. cmdName feeds the
+// parseIndex and reviewEvent error messages, so each spelling names itself.
+func runReviewSubmit(args []string, ctx *cli.Ctx, cmdName, state, body string) error {
+	n, err := parseIndex(stripFlags(args, "--state", "--body"), cmdName)
 	if err != nil {
 		return err
 	}
-	state, _ := flagValue(args, "--state")
-	body, _ := flagValue(args, "--body")
-	event, err := reviewEvent(state, body)
+	event, err := reviewEvent(cmdName, state, body)
 	if err != nil {
 		return err
 	}
@@ -155,6 +165,66 @@ func (reviewSubmitCmd) Run(args []string, ctx *cli.Ctx) error {
 		return mapErr(err)
 	}
 	return writeJSON(ctx.Stdout, ReviewReceipt{ID: review.ID, State: review.State})
+}
+
+// ---- pr review (gh-style flags) ----
+
+// reviewFlagsCmd is the gh-spelled review form. It derives the same state
+// string reviewSubmitCmd passes to runReviewSubmit, so both spellings share
+// one validation and one transport. The --approve/--request-changes/--comment
+// flags are boolean: exactly one is required, never a value.
+type reviewFlagsCmd struct{}
+
+func (reviewFlagsCmd) Name() string { return "pr review" }
+func (reviewFlagsCmd) Summary() string {
+	return "submit one review on a pull request --approve|--request-changes|--comment [--body T]"
+}
+func (reviewFlagsCmd) RequiresAPI() bool { return true }
+
+func (reviewFlagsCmd) Run(args []string, ctx *cli.Ctx) error {
+	state := ""
+	given := 0
+	for _, f := range []struct{ flag, event string }{
+		{"--approve", "approve"},
+		{"--request-changes", "request-changes"},
+		{"--comment", "comment"},
+	} {
+		if hasFlag(args, f.flag) {
+			state = f.event
+			given++
+		}
+	}
+	if given == 0 {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  "pr review: one of --approve, --request-changes, or --comment is required",
+			Hint: "or use forge pr review submit N --state S for the --state spelling",
+		}
+	}
+	if given > 1 {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  "pr review: --approve, --request-changes, and --comment are mutually exclusive",
+		}
+	}
+	body, _ := flagValue(args, "--body")
+	return runReviewSubmit(args, ctx, "pr review", state, body)
+}
+
+func (reviewFlagsCmd) HelpPage() string {
+	return `use: forge pr review N --approve|--request-changes|--comment [--body T]
+alias: forge pr review submit N --state approve|request-changes|comment [--body T]
+
+Submit one review on pull request N and print a JSON receipt {id, state}.
+Give exactly one event flag:
+
+  --approve          APPROVED
+  --request-changes  REQUEST_CHANGES (requires --body)
+  --comment          COMMENT
+
+--body supplies the review text; it is required for --request-changes and
+optional otherwise. Both spellings produce the same receipt; pr review submit
+--state stays as a compatibility alias.`
 }
 
 func (reviewSubmitCmd) HelpPage() string {

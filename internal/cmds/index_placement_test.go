@@ -172,34 +172,30 @@ func TestIndexPlacementReviewSubmit(t *testing.T) {
 }
 
 func TestIndexPlacementResolveAll(t *testing.T) {
-	// Assert the reviews GET went to /pulls/7, not to the numeric --review
-	// flag value 11: a mis-scan of the flag value as the index must fail here
-	// rather than silently hitting a different pull.
+	// The index fixture answers every reviews/comments path with empty or
+	// generic payloads, so the run itself succeeds under any index; the
+	// placement is pinned by which pull the review list was fetched from.
 	cases := []struct {
-		name string
-		args []string
+		name    string
+		args    []string
+		want    string
+		notWant string
 	}{
-		{"index first", []string{"7"}},
-		{"flags first", []string{"--yes", "7"}},
-		{"numeric flag value", []string{"--review", "11", "7", "--yes"}},
+		{"index first", []string{"7"}, "/pulls/7/reviews", ""},
+		{"flags first", []string{"--yes", "7"}, "/pulls/7/reviews", ""},
+		// The decoy 3 doubles as the fixture's only review id: a correct scan
+		// filters reviews by it, a mis-scan would fetch /pulls/3 instead.
+		{"numeric flag value", []string{"--review", "3", "7", "--yes"}, "/pulls/7/reviews", "/pulls/3/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fx := newResolveAllFixture(t)
-			ts := fx.server()
+			f := &indexFixture{}
+			ts := httptest.NewServer(http.HandlerFunc(f.serve))
 			defer ts.Close()
 			if err := (resolveAllCmd{}).Run(tc.args, testCtx(ts)); err != nil {
 				t.Fatal(err)
 			}
-			fx.mu.Lock()
-			joined := strings.Join(fx.paths, "\n")
-			fx.mu.Unlock()
-			if !strings.Contains(joined, "GET /api/v1/repos/o/r/pulls/7/reviews") {
-				t.Errorf("requests = %v, want a reviews GET for pull 7", fx.paths)
-			}
-			if strings.Contains(joined, "/pulls/11/") {
-				t.Errorf("requests = %v, --review value 11 was mistaken for the index", fx.paths)
-			}
+			wantPaths(t, f, tc.want, tc.notWant)
 		})
 	}
 }
