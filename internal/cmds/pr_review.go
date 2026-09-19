@@ -115,8 +115,10 @@ type ReviewReceipt struct {
 }
 
 // reviewEvent maps a CLI --state spelling to the exact Forgejo review event.
-// request-changes requires a non-empty body; the other events do not.
-func reviewEvent(state, body string) (string, error) {
+// request-changes requires a non-empty body; the other events do not. cmdName
+// is the invoked spelling ("pr review" or "pr review submit") and feeds the
+// usage-error messages, so both spellings name themselves correctly.
+func reviewEvent(cmdName, state, body string) (string, error) {
 	switch state {
 	case "approve":
 		return "APPROVED", nil
@@ -126,15 +128,15 @@ func reviewEvent(state, body string) (string, error) {
 		if body == "" {
 			return "", &cli.Error{
 				Code: cli.ExitUsage,
-				Msg:  "pr review submit: --state request-changes requires --body",
-				Hint: "explain what must change, or use --state comment for a non-blocking note",
+				Msg:  cmdName + ": request-changes requires --body",
+				Hint: "explain what must change, or use comment for a non-blocking note",
 			}
 		}
 		return "REQUEST_CHANGES", nil
 	default:
 		return "", &cli.Error{
 			Code: cli.ExitUsage,
-			Msg:  fmt.Sprintf("pr review submit: --state must be approve, request-changes, or comment (got %q)", state),
+			Msg:  fmt.Sprintf("%s: --state must be approve, request-changes, or comment (got %q)", cmdName, state),
 		}
 	}
 }
@@ -147,14 +149,14 @@ func (reviewSubmitCmd) Run(args []string, ctx *cli.Ctx) error {
 
 // runReviewSubmit is the one review-submission path behind both registered
 // spellings: it scans the index with the value flags stripped, validates the
-// event through reviewEvent, and posts SubmitReviewInput. cmdName only feeds
-// parseIndex error messages.
+// event through reviewEvent, and posts SubmitReviewInput. cmdName feeds the
+// parseIndex and reviewEvent error messages, so each spelling names itself.
 func runReviewSubmit(args []string, ctx *cli.Ctx, cmdName, state, body string) error {
 	n, err := parseIndex(stripFlags(args, "--state", "--body"), cmdName)
 	if err != nil {
 		return err
 	}
-	event, err := reviewEvent(state, body)
+	event, err := reviewEvent(cmdName, state, body)
 	if err != nil {
 		return err
 	}

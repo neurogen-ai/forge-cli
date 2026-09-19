@@ -28,7 +28,8 @@ body. The path is relative to the API root; a leading slash is optional.
 Absolute http(s) URLs are rejected: the request always goes to the configured
 host, so the token is never sent anywhere you did not point forge at.
 
---method defaults to GET. --q is repeatable and order-preserving. --input
+--method defaults to GET and must be a valid HTTP method token. --q is
+repeatable; repeated keys are sent as repeated query parameters. --input
 takes inline JSON, @file, or - for stdin. With --jq the JSON response is
 piped through the system jq with your filter as a single argument; the shell
 is never involved, and jq's own errors are passed through.
@@ -87,10 +88,19 @@ func (c apiCmd) Run(args []string, ctx *cli.Ctx) error {
 				Hint: "quote the whole pair if the shell splits it: --q \"k=v\"",
 			}
 		}
-		query.Set(kv[:eq], kv[eq+1:])
+		query.Add(kv[:eq], kv[eq+1:])
 	}
 
-	resp, err := ctx.API.DoRaw(strings.ToUpper(method), path, query, body)
+	method = strings.ToUpper(method)
+	if !httpMethodToken(method) {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  "--method: \"" + method + "\" is not a valid HTTP method",
+			Hint: "use an HTTP method token such as GET, POST, PUT, PATCH, or DELETE",
+		}
+	}
+
+	resp, err := ctx.API.DoRaw(method, path, query, body)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -98,6 +108,24 @@ func (c apiCmd) Run(args []string, ctx *cli.Ctx) error {
 		return runJQ(ctx.Stdout, ctx.Stderr, jqFilter, resp.Body)
 	}
 	return writeAPIResponse(ctx.Stdout, resp.ContentType, resp.Body)
+}
+
+// httpMethodToken reports whether s is a valid HTTP method token per RFC 7230
+// (token characters only); it keeps an invalid --method a usage error instead
+// of surfacing later as a request-build runtime error.
+func httpMethodToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // stringFlag reads the single occurrence of a value flag, rejecting repeats.

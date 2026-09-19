@@ -21,6 +21,7 @@ PR="${FORGE_PROBE_PR:?set FORGE_PROBE_PR}"
 API="https://$HOST/api/v1/repos/$REPO"
 H="Authorization: token $TOK"
 CT="Content-Type: application/json"
+command -v jq >/dev/null || { echo "jq is required for review-id extraction and cleanup"; exit 1; }
 TRANSPORT_ERR=0
 ACCEPTED=""
 RANGE_SUPPORT="unknown"

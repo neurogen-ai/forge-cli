@@ -279,6 +279,35 @@ func firstLine(s string) string {
 	return s
 }
 
+// The --body value is stripped before anchor parsing, so a body that literally
+// reads "--file" or "--side" must not poison file/line/side resolution: the
+// real anchor flags win, and a body-only "--side" must not invent an error.
+func TestCommentAnchoredBodyValueIsNotFlagSyntax(t *testing.T) {
+	var gotBody string
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		fmt.Fprint(w, `{"id":9,"state":"COMMENT","comments":[{"id":77,"path":"main.go","html_url":"u"}]}`)
+	})
+	ctx := testCtx(ts)
+	cmd := commentAddCmd{kind: "pr", gh: true}
+	if err := cmd.Run([]string{"5", "--body", "--file", "--file", "main.go", "--line", "12"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotBody, `"path":"main.go"`) {
+		t.Errorf("--body value poisoned the path, request = %s", gotBody)
+	}
+
+	gotBody = ""
+	ctx = testCtx(ts)
+	if err := cmd.Run([]string{"5", "--body", "--side", "--file", "main.go", "--line", "12"}, ctx); err != nil {
+		t.Fatalf("a body reading --side must not be mistaken for a --side flag: %v", err)
+	}
+	if !strings.Contains(gotBody, `"path":"main.go"`) {
+		t.Errorf("request = %s", gotBody)
+	}
+}
+
 // Anchor flags present route the comment to the review-comment transport:
 // one COMMENT review carrying a single inline entry, and an anchored receipt.
 func TestCommentAnchoredSuccess(t *testing.T) {

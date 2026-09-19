@@ -175,6 +175,31 @@ func TestAPIPassthroughInputForms(t *testing.T) {
 	}
 }
 
+// Repeated same-key --q pairs must arrive as repeated query parameters, not
+// be overwritten by the last one; an invalid --method token is a usage error
+// before any request.
+func TestAPIPassthroughQueryAndMethodValidation(t *testing.T) {
+	var gotQuery string
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{}`))
+	})
+	ctx := testCtx(ts)
+	if err := (apiCmd{}).Run([]string{"repos/o/r", "--q", "label=a", "--q", "label=b"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery != "label=a&label=b" {
+		t.Errorf("query = %q, want repeated label keys sent", gotQuery)
+	}
+
+	ctx = testCtx(ts)
+	err := (apiCmd{}).Run([]string{"repos/o/r", "--method", "GARBAGE METHOD"}, ctx)
+	e, ok := err.(*cli.Error)
+	if !ok || e.Code != cli.ExitUsage {
+		t.Fatalf("invalid method err = %v, want usage", err)
+	}
+}
+
 func TestAPIPassthroughErrors(t *testing.T) {
 	// Non-2xx maps to the standard runtime error with the server message.
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
