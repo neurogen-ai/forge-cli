@@ -800,3 +800,43 @@ func TestGetPullRequestOmittedFieldsStayZero(t *testing.T) {
 		t.Errorf("omitted fields must stay zero-valued, got %+v", pr)
 	}
 }
+
+func TestGetPullRequestDecodeRequestedReviewers(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{
+			"number": 5,
+			"requested_reviewers": [
+				{"id": 11, "login": "ana"},
+				{"id": 12, "login": "bo"}
+			]
+		}`))
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).GetPullRequest("o", "r", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pr.RequestedReviewers) != 2 {
+		t.Fatalf("requested_reviewers = %+v, want 2 entries", pr.RequestedReviewers)
+	}
+	if pr.RequestedReviewers[0].ID != 11 || pr.RequestedReviewers[0].Login != "ana" ||
+		pr.RequestedReviewers[1].Login != "bo" {
+		t.Errorf("requested_reviewers = %+v", pr.RequestedReviewers)
+	}
+}
+
+func TestGetPullRequestDecodeOmitsRequestedReviewers(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"number": 6}`))
+	}))
+	defer ts.Close()
+
+	pr, err := newTestClient(ts).GetPullRequest("o", "r", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pr.RequestedReviewers) != 0 {
+		t.Errorf("requested_reviewers = %+v, want empty", pr.RequestedReviewers)
+	}
+}
