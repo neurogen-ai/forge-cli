@@ -26,7 +26,7 @@ func TestSearchIssuesParamsAndDecode(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := newTestClient(ts).SearchIssues("o", "r", "crash on save", "issues", "")
+	got, err := newTestClient(ts).SearchIssues("o", "r", "crash on save", "issues", "", 1, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSearchIssuesStateSent(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := newTestClient(ts).SearchIssues("o", "r", "x", "pulls", "open"); err != nil {
+	if _, err := newTestClient(ts).SearchIssues("o", "r", "x", "pulls", "open", 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if gotState != "open" {

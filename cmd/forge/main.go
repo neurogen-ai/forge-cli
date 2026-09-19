@@ -176,6 +176,7 @@ func main() {
 	reg.Register(versionCmd{})
 	reg.Register(cmds.PRCommands()...)
 	reg.Register(cmds.IssueCommands()...)
+	reg.Register(cmds.SearchCommands()...)
 	reg.Register(cmds.PullCommands()...)
 	reg.Register(cmds.CacheCommands()...)
 	reg.Register(cmds.LabelCommands()...)
