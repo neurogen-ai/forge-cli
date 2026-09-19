@@ -18,6 +18,9 @@ type Label struct {
 }
 
 // PullRequest models GET/POST /repos/{owner}/{repo}/pulls payloads.
+// Draft, UpdatedAt, Merged, Mergeable, and Head.Repo feed the tuicr
+// ForgeBackend audit; all stay server-provided, and a field an instance
+// omits stays zero-valued.
 type PullRequest struct {
 	Number    int64      `json:"number"`
 	Title     string     `json:"title"`
@@ -26,13 +29,21 @@ type PullRequest struct {
 	User      User       `json:"user"`
 	HTMLURL   string     `json:"html_url"`
 	CreatedAt *time.Time `json:"created_at"`
+	Draft     bool       `json:"draft"`
+	UpdatedAt *time.Time `json:"updated_at"`
+	Merged    bool       `json:"merged"`
+	Mergeable bool       `json:"mergeable"`
 
 	Head struct {
 		Ref string `json:"ref"`
 		Sha string `json:"sha"`
+
+		// Repo is nil for same-repo heads; CloneURL feeds cross-repo checkout.
+		Repo *Repository `json:"repo,omitempty"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
+		Sha string `json:"sha"`
 	} `json:"base"`
 
 	Labels []Label `json:"labels,omitempty"`
@@ -126,4 +137,5 @@ type Repository struct {
 	FullName      string `json:"full_name"`
 	DefaultBranch string `json:"default_branch"`
 	HTMLURL       string `json:"html_url"`
+	CloneURL      string `json:"clone_url"`
 }
