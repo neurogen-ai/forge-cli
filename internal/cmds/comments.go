@@ -1,8 +1,10 @@
 package cmds
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"forge/internal/api"
 	"forge/internal/cli"
@@ -168,7 +170,49 @@ func (c commentAddCmd) runAnchored(anchorArgs []string, ctx *cli.Ctx, n int, tex
 		return &cli.Error{Code: cli.ExitUsage, Msg: c.Name() + ": " + err.Error()}
 	}
 	entry.Body = text
+	if err := c.checkAnchorAgainstDiff(ctx, n, file, side, line); err != nil {
+		return err
+	}
 	return c.postAnchored(ctx, n, entry, side)
+}
+
+// checkAnchorAgainstDiff verifies the requested anchor is a hunk line of the
+// pull request's diff before anything is posted. An anchor outside the hunks
+// makes some instances resolve the comment's line to 0 and crash their
+// reverse-blame lookup with a 500 (git: -L invalid line number: 0); catching
+// the bad anchor here turns that crash into a predictable usage error before
+// any comment is written. The pre-check is advisory: a diff that cannot be
+// fetched never blocks posting, and the server still decides.
+func (c commentAddCmd) checkAnchorAgainstDiff(ctx *cli.Ctx, n int, file, side string, line int) error {
+	raw, err := ctx.API.GetPullDiff(ctx.GlobalFlags.Owner, ctx.GlobalFlags.Repo, n, "diff")
+	if err != nil {
+		return nil
+	}
+	hunks, found := api.ParseDiffHunks(raw.Body, file)
+	if !found {
+		return &cli.Error{
+			Code: cli.ExitUsage,
+			Msg:  fmt.Sprintf("%s: %s is not part of pr %d's diff", c.Name(), file, n),
+			Hint: fmt.Sprintf("anchor --file to a path that appears in `forge pr diff %d`", n),
+		}
+	}
+	for _, h := range hunks {
+		if side == "old" && h.CoversOld(line) {
+			return nil
+		}
+		if side != "old" && h.CoversNew(line) {
+			return nil
+		}
+	}
+	sideWord := side
+	if sideWord == "" {
+		sideWord = "new"
+	}
+	return &cli.Error{
+		Code: cli.ExitUsage,
+		Msg:  fmt.Sprintf("%s: line %d is not a %s-side hunk line of %s in pr %d's diff", c.Name(), line, sideWord, file, n),
+		Hint: fmt.Sprintf("anchor --line to a number inside a hunk of `forge pr diff %d`", n),
+	}
 }
 
 // postAnchored sends the anchored review comment and prints the receipt.
@@ -178,7 +222,7 @@ func (c commentAddCmd) postAnchored(ctx *cli.Ctx, n int, entry api.ReviewComment
 		Comments: []api.ReviewCommentInput{entry},
 	})
 	if err != nil {
-		return mapErr(err)
+		return mapAnchoredErr(err)
 	}
 	line := entry.NewLineNum
 	if side == "old" {
@@ -193,6 +237,24 @@ func (c commentAddCmd) postAnchored(ctx *cli.Ctx, n int, entry api.ReviewComment
 	})
 }
 
+// mapAnchoredErr maps API errors from the anchored-comment transport. A 500
+// naming blame is the instance failing to resolve the anchored line (its
+// reverse blame runs `git blame -L` and got a zero line even though this run
+// pre-validated the anchor): the server message stays verbatim and the hint
+// names the two things worth checking. Every other status maps like the
+// ordinary mapErr path.
+func mapAnchoredErr(err error) error {
+	mapped := mapErr(err)
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == 500 && strings.Contains(strings.ToLower(apiErr.Message), "blame") {
+		var cerr *cli.Error
+		if errors.As(mapped, &cerr) {
+			cerr.Hint = "the instance crashed resolving the anchored line: confirm the anchor encoding this instance accepts by running scripts/probe-v0.5.0.sh against it, and check its Forgejo version"
+		}
+	}
+	return mapped
+}
+
 func (c commentAddCmd) HelpPage() string {
 	if !c.gh {
 		return fmt.Sprintf(`use: forge %[1]s N --body T
@@ -201,7 +263,8 @@ Add one comment to %[1]s N and print a JSON receipt {id, html_url}.
 --body is required; an empty body is a usage error before any request.
 --body - reads the comment text from stdin.
 
-Single-shot: one POST, one receipt. The receipt is the full output; --table
+Single-shot when unanchored: one POST, one receipt. Anchored comments add a
+diff pre-check GET. The receipt is the full output; --table
 is rejected.`, c.kind+" comment add")
 	}
 	return fmt.Sprintf(`use: forge pr comment N --body T
@@ -213,12 +276,14 @@ Add one comment to pr N and print a JSON receipt {id, html_url}.
 
 Anchor the comment to one diff hunk line with --file P --line L [--side old|new]:
 the comment is posted as an inline review comment on that line; --side defaults
-to new. A server that cannot anchor the line fails with the server message;
+to new. Before posting, forge fetches pr N's diff and verifies the anchor is a
+hunk line; an anchor outside the hunks is a usage error before any comment is
+written. A server that cannot anchor the line fails with the server message;
 the comment is never posted unanchored.
 
 "pr comment" is the canonical spelling; "pr comment add" is a compatibility alias with
 the same receipt.
 
-Single-shot: one POST, one receipt. The receipt is the full output; --table
-is rejected.`)
+One diff pre-check GET and one POST when anchored, one POST otherwise. The
+receipt is the full output; --table is rejected.`)
 }

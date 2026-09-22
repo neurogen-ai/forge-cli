@@ -285,6 +285,10 @@ func firstLine(s string) string {
 func TestCommentAnchoredBodyValueIsNotFlagSyntax(t *testing.T) {
 	var gotBody string
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".diff") {
+			fmt.Fprint(w, anchorDiffFixture)
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		gotBody = string(raw)
 		fmt.Fprint(w, `{"id":9,"state":"COMMENT","comments":[{"id":77,"path":"main.go","html_url":"u"}]}`)
@@ -307,6 +311,20 @@ func TestCommentAnchoredBodyValueIsNotFlagSyntax(t *testing.T) {
 		t.Errorf("request = %s", gotBody)
 	}
 }
+
+// The diff served to the anchored pre-check: main.go hunks covering new-side
+// line 12 and old-side line 3.
+const anchorDiffFixture = `diff --git a/main.go b/main.go
+index 000000..111111 100644
+--- a/main.go
++++ b/main.go
+@@ -1,5 +10,7 @@
+ context
++added
+ context
+-removed
+ context
+`
 
 // Anchor flags present route the comment to the review-comment transport:
 // one COMMENT review carrying a single inline entry, and an anchored receipt.
@@ -335,6 +353,10 @@ func TestCommentAnchoredSuccess(t *testing.T) {
 			var requests []string
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				raw, _ := io.ReadAll(r.Body)
+				if r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".diff") {
+					fmt.Fprint(w, anchorDiffFixture)
+					return
+				}
 				requests = append(requests, r.Method+" "+r.URL.Path+" "+string(raw))
 				fmt.Fprint(w, `{"id":9,"state":"COMMENT","comments":[{"id":77,"path":"main.go","html_url":"https://h/o/r/pulls/5#discussion_r77"}]}`)
 			}))
@@ -362,7 +384,9 @@ func TestCommentAnchoredSuccess(t *testing.T) {
 }
 
 // A server that rejects the anchor is the standard exit-1 path with the
-// server message, and no comment is posted by the ordinary path.
+// server message, and no comment is posted by the ordinary path. The diff
+// pre-check GET happens first and its own failure (422 on the .diff fetch)
+// does not block the post.
 func TestCommentAnchoredServerReject(t *testing.T) {
 	var paths []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -384,8 +408,8 @@ func TestCommentAnchoredServerReject(t *testing.T) {
 	if !strings.Contains(mapped.Msg, "line 404 is not part of the diff") {
 		t.Errorf("server message lost: %q", mapped.Msg)
 	}
-	if len(paths) != 1 || paths[0] != "/api/v1/repos/o/r/pulls/5/reviews" {
-		t.Fatalf("anchor must be the only request, got %v", paths)
+	if len(paths) != 2 || paths[0] != "/api/v1/repos/o/r/pulls/5.diff" || paths[1] != "/api/v1/repos/o/r/pulls/5/reviews" {
+		t.Fatalf("pre-check GET must precede the single review POST, got %v", paths)
 	}
 }
 
@@ -429,5 +453,105 @@ func TestCommentAnchoredValidation(t *testing.T) {
 				t.Errorf("%d requests sent; validation must happen before any request", hits)
 			}
 		})
+	}
+}
+
+// An anchor that is not a hunk line of the pull request's diff is a usage
+// error before any comment is written: some instances resolve such an anchor
+// to line 0 and crash their reverse-blame lookup with a 500. No review POST
+// happens; only the pre-check GET did.
+func TestCommentAnchorPrecheckRejects(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		msg  string
+	}{
+		{"line outside hunks", []string{"5", "--body", "hi", "--file", "main.go", "--line", "100"},
+			"line 100 is not a new-side hunk line of main.go"},
+		{"old-side line outside old range", []string{"5", "--body", "hi", "--file", "main.go", "--line", "11", "--side", "old"},
+			"line 11 is not a old-side hunk line"},
+		{"file not in diff", []string{"5", "--body", "hi", "--file", "other.go", "--line", "1"},
+			"other.go is not part of pr 5's diff"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".diff") {
+					fmt.Fprint(w, anchorDiffFixture)
+					return
+				}
+				posts++
+				fmt.Fprint(w, `{}`)
+			}))
+			defer ts.Close()
+			ctx := testCtx(ts)
+			cmd := commentAddCmd{kind: "pr", gh: true}
+			err := cmd.Run(tc.args, ctx)
+			mapped, ok := err.(*cli.Error)
+			if !ok || mapped.Code != cli.ExitUsage {
+				t.Fatalf("want usage error, got %T: %v", err, err)
+			}
+			if !strings.Contains(mapped.Msg, tc.msg) {
+				t.Errorf("msg = %q, want substring %q", mapped.Msg, tc.msg)
+			}
+			if !strings.Contains(mapped.Hint, "pr diff 5") {
+				t.Errorf("hint = %q, want the diff pointer", mapped.Hint)
+			}
+			if posts != 0 {
+				t.Errorf("%d review posts sent; an unanchorable line must never reach the server", posts)
+			}
+		})
+	}
+}
+
+// A diff that cannot be fetched never blocks posting: the pre-check is
+// advisory and the server still decides.
+func TestCommentAnchorPrecheckSkipsOnDiffFailure(t *testing.T) {
+	var posts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".diff") {
+			w.WriteHeader(404)
+			return
+		}
+		posts++
+		fmt.Fprint(w, `{"id":9,"state":"COMMENT","comments":[{"id":77,"path":"main.go","html_url":"u"}]}`)
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	cmd := commentAddCmd{kind: "pr", gh: true}
+	if err := cmd.Run([]string{"5", "--body", "hi", "--file", "main.go", "--line", "12"}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 1 {
+		t.Errorf("posts = %d, want 1", posts)
+	}
+}
+
+// A 500 naming blame from the anchored transport keeps the server message
+// verbatim and gains a hint naming the probe and the version check: the
+// pre-validated anchor still failed to resolve server-side.
+func TestCommentAnchored500BlameHint(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".diff") {
+			fmt.Fprint(w, anchorDiffFixture)
+			return
+		}
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"ReverseLineBlame[a, main.go, 0, b]: exit status 128 - fatal: -L invalid line number: 0"}`))
+	}))
+	defer ts.Close()
+	ctx := testCtx(ts)
+	cmd := commentAddCmd{kind: "pr", gh: true}
+	err := cmd.Run([]string{"5", "--body", "hi", "--file", "main.go", "--line", "12"}, ctx)
+	mapped, ok := err.(*cli.Error)
+	if !ok || mapped.Code != cli.ExitRuntime {
+		t.Fatalf("want runtime error, got %T: %v", err, err)
+	}
+	if !strings.Contains(mapped.Msg, "-L invalid line number: 0") {
+		t.Errorf("server message lost: %q", mapped.Msg)
+	}
+	if !strings.Contains(mapped.Hint, "probe-v0.5.0.sh") {
+		t.Errorf("hint = %q, want the probe pointer", mapped.Hint)
 	}
 }
